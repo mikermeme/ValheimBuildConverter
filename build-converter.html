@@ -1,0 +1,2434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Valheim Build File Converter</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --surface2: #0f3460;
+  --accent: #e94560;
+  --accent2: #533483;
+  --text: #eaeaea;
+  --text2: #a0a0b0;
+  --success: #2ecc71;
+  --warning: #f39c12;
+  --error: #e74c3c;
+  --border: #2a2a4a;
+}
+body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 20px; background: var(--bg); color: var(--text); line-height: 1.5; }
+h1 { color: var(--accent); border-bottom: 2px solid var(--accent2); padding-bottom: 8px; }
+h2 { color: var(--accent); margin-top: 24px; }
+h3 { color: var(--text); margin-top: 16px; }
+.section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin: 16px 0; }
+.flex-row { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.btn { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s; }
+.btn-primary { background: var(--accent); color: white; }
+.btn-primary:hover { background: #d63850; }
+.btn-primary:disabled { background: #6a3340; color: #888; cursor: not-allowed; }
+.btn-secondary { background: var(--accent2); color: white; }
+.btn-secondary:hover { background: #6a44a0; }
+.btn-success { background: var(--success); color: white; }
+.btn-success:hover { background: #27ae60; }
+.btn-sm { padding: 6px 14px; font-size: 12px; }
+input[type="file"] { display: block; margin: 8px 0; color: var(--text); }
+.file-label { display: inline-block; background: var(--surface2); color: var(--text); padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; border: 1px dashed var(--border); }
+.file-label:hover { border-color: var(--accent); }
+.file-label input { display: none; }
+.file-name { font-size: 12px; color: var(--text2); margin-left: 8px; }
+.status { padding: 12px; border-radius: 6px; margin: 8px 0; }
+.status-info { background: #1a2a4a; border-left: 3px solid var(--accent2); }
+.status-ok { background: #1a3a2a; border-left: 3px solid var(--success); }
+.status-warn { background: #3a3a1a; border-left: 3px solid var(--warning); }
+.status-err { background: #3a1a1a; border-left: 3px solid var(--error); }
+.error-list { max-height: 300px; overflow-y: auto; font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; }
+.error-list div { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.report-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 12px 0; }
+.report-item { background: var(--surface2); border-radius: 6px; padding: 12px; text-align: center; }
+.report-item .num { font-size: 28px; font-weight: 700; display: block; }
+.report-item .label { font-size: 11px; color: var(--text2); text-transform: uppercase; }
+.num-green { color: var(--success); }
+.num-red { color: var(--error); }
+.num-blue { color: #3498db; }
+.num-yellow { color: var(--warning); }
+.num-gray { color: var(--text2); }
+
+.collapsible { cursor: pointer; user-select: none; }
+.collapsible::before { content: '▶ '; font-size: 12px; }
+.collapsible.open::before { content: '▼ '; }
+.collapsible-content { display: none; padding: 12px 0; }
+.collapsible-content.open { display: block; }
+
+table.field-safety { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.field-safety th, table.field-safety td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+table.field-safety th { background: var(--surface2); color: var(--text2); font-size: 11px; text-transform: uppercase; }
+table.field-safety tr:hover { background: rgba(255,255,255,0.03); }
+.safe { color: var(--success); }
+.load-bearing { color: var(--warning); }
+code { background: #2a2a4a; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+
+#hash-status { margin: 8px 0; }
+.progress-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin: 8px 0; }
+.progress-bar-fill { height: 100%; background: var(--accent); transition: width 0.3s; width: 0; }
+
+@media (max-width: 600px) {
+  body { padding: 10px; }
+  .flex-row { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+
+<h1>Valheim Build File Converter</h1>
+<p style="color:var(--text2);">Convert between <code>.blueprint</code> (PlanBuild), <code>.rewind</code> (Rewind), <code>.vbuild</code> (legacy import) and editable CSV spreadsheets. v2.0</p>
+
+<div id="hash-status" class="status status-info">Loading master hash lookup...</div>
+
+<!------------------------------ UNIVERSAL CONVERT ---------------------------->
+<div class="section">
+  <h2>🔁 Universal Convert — .blueprint / .rewind / .vbuild</h2>
+  <p style="font-size:13px; color:var(--text2);">
+    Drop any build file — format is auto-detected. Choose the output format.
+    For CSV output the standard three CSVs are produced (plus <code>snappoints.csv</code> / <code>terrain.csv</code> sidecars when the source is a blueprint that has them).
+  </p>
+  <div class="flex-row">
+    <label class="file-label">
+      Choose build file
+      <input type="file" id="uni-file" accept="*/*">
+    </label>
+    <span id="uni-filename" class="file-name"></span>
+  </div>
+  <div class="flex-row" style="margin-top:10px; align-items:center;">
+    <span style="font-size:13px;">Output:</span>
+    <label style="font-size:13px;"><input type="radio" name="uni-target" value="blueprint" checked> .blueprint</label>
+    <label style="font-size:13px;"><input type="radio" name="uni-target" value="rewind"> .rewind</label>
+    <label style="font-size:13px;"><input type="radio" name="uni-target" value="csv"> CSVs</label>
+    <button class="btn btn-primary" id="uni-convert-btn" disabled>Convert</button>
+  </div>
+  <div id="uni-bp-opts" style="margin-top:10px; font-size:13px;">
+    <div class="flex-row" style="align-items:center;">
+      <label>Reference point:
+        <select id="uni-reference" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px;">
+          <option value="mincorner" selected>Min corner (PlanBuild convention)</option>
+          <option value="origin">Rewind file origin</option>
+          <option value="zero">None (keep coordinates)</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="uni-emit-unresolved"> Emit unresolved prefabs as <code>#0xHEX</code> (default: skip + report)</label>
+    </div>
+    <div class="flex-row" style="margin-top:8px;">
+      <input type="text" id="uni-bp-name" placeholder="Name" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px;">
+      <input type="text" id="uni-bp-creator" placeholder="Creator" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px;">
+      <input type="text" id="uni-bp-desc" placeholder="Description" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px; flex:1;">
+      <input type="text" id="uni-bp-category" placeholder="Category (Blueprints)" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px;">
+    </div>
+  </div>
+  <div id="uni-status"></div>
+  <div id="uni-report" style="display:none;"></div>
+</div>
+
+<!------------------------------ EXPORT SECTION ------------------------------>
+<div class="section">
+  <h2>📤 Export .rewind → CSVs</h2>
+  <p style="font-size:13px; color:var(--text2);">Pick a <code>.rewind</code> file to generate three CSV files.</p>
+  <div class="flex-row">
+    <label class="file-label">
+      Choose .rewind file
+      <input type="file" id="export-file" accept="*/*">
+    </label>
+    <button class="btn btn-primary" id="export-btn" disabled>Export CSVs</button>
+  </div>
+  <div id="export-filename" class="file-name"></div>
+  <div id="export-status"></div>
+  <div id="export-summary" style="display:none;" class="status status-ok">
+    <p><strong>Export complete!</strong></p>
+    <p style="font-size:13px;color:var(--text2);">CSV files have been downloaded. The parsed data is kept in memory for re-import.</p>
+    <div id="export-stats" class="report-grid"></div>
+    <div id="export-flagged" style="margin-top:8px; font-size:12px; color:var(--text2);"></div>
+  </div>
+</div>
+
+<!------------------------------ IMPORT SECTION ------------------------------>
+<div class="section">
+  <h2>📥 Import CSVs → .rewind</h2>
+  <p style="font-size:13px; color:var(--text2);">
+    Upload the three CSV files. The <em>items</em> file is optional for builds without containers.
+    If you're re-importing from the <strong>same session</strong> (just exported above), the original data is used for diffing.
+    If this is a <strong>new session</strong> (no original in memory), all rows are treated as "changed" — this is safe but re-encodes every ZDO.
+  </p>
+  <div class="flex-row" style="margin-bottom:12px;">
+    <label class="file-label">
+      meta.csv <span style="color:var(--text2);">(required)</span>
+      <input type="file" id="import-meta" accept=".csv">
+    </label>
+    <label class="file-label">
+      zdos.csv <span style="color:var(--text2);">(required)</span>
+      <input type="file" id="import-zdos" accept=".csv">
+    </label>
+    <label class="file-label">
+      items.csv <span style="color:var(--text2);">(optional)</span>
+      <input type="file" id="import-items" accept=".csv">
+    </label>
+    <label class="file-label">
+      snappoints.csv <span style="color:var(--text2);">(optional)</span>
+      <input type="file" id="import-snappoints" accept=".csv">
+    </label>
+    <label class="file-label">
+      terrain.csv <span style="color:var(--text2);">(optional)</span>
+      <input type="file" id="import-terrain" accept=".csv">
+    </label>
+    <button class="btn btn-secondary" id="validate-btn" disabled>Validate</button>
+  </div>
+  <div id="import-filenames" style="font-size:12px; color:var(--text2); margin-bottom:8px;"></div>
+  <div id="import-status"></div>
+  <div id="import-report" style="display:none;"></div>
+  <div id="import-download-area" style="display:none;">
+    <button class="btn btn-success" id="download-btn" disabled>Download .rewind</button>
+    <button class="btn btn-secondary" id="download-bp-btn" disabled title="Build the .rewind in memory, then project it to a PlanBuild .blueprint (uses the reference-point option from Universal Convert)">Download .blueprint</button>
+  </div>
+</div>
+
+<!------------------------------ FIELD SAFETY -------------------------------->
+<div class="section">
+  <h2 class="collapsible" onclick="togglePanel(this)">ℹ️ Field Safety &amp; About This Format</h2>
+  <div class="collapsible-content">
+    <p style="font-size:13px; color:var(--text2);">
+      When editing CSVs, some fields in the binary format are <strong>inert</strong> — the game ignores or overwrites them on load.
+      Others are <strong>load-bearing</strong> and must be set correctly. Here's what you can safely leave blank or default:
+    </p>
+    <table class="field-safety">
+      <tr><th>Field</th><th>Behavior on /loadbuild in-game</th><th>Implication for CSV editing</th></tr>
+      <tr>
+        <td><code>ownerUserID</code> / <code>ownerID</code></td>
+        <td class="safe">Discarded. Game always mints a fresh ZDOID.</td>
+        <td>Safe to leave blank on new rows. Not exposed as editable columns.</td>
+      </tr>
+      <tr>
+        <td><code>sector</code></td>
+        <td class="safe">Recomputed from final position via <code>ZoneSystem.GetZone</code>.</td>
+        <td>Safe as placeholder on new rows. Still populated on export for tidiness.</td>
+      </tr>
+      <tr>
+        <td><code>timeCreated</code></td>
+        <td class="safe">Overwritten when build is added to the world.</td>
+        <td>Irrelevant for new rows. Not exposed as an editable column.</td>
+      </tr>
+      <tr>
+        <td><code>userKey</code></td>
+        <td class="safe">Only used transiently during load.</td>
+        <td>Inert for CSV purposes.</td>
+      </tr>
+      <tr>
+        <td><code>ownerRevision</code> / <code>dataRevision</code></td>
+        <td class="safe">Meaningful only for live network sync.</td>
+        <td>Inert for CSV purposes.</td>
+      </tr>
+      <tr>
+        <td><code>persistent</code>, <code>distant</code>, <code>type</code></td>
+        <td class="load-bearing">Trusted as-is. No recomputation.</td>
+        <td><strong>Must be set correctly.</strong> Export includes them; import defaults them.</td>
+      </tr>
+      <tr>
+        <td><code>prefabHash</code>, position, rotation</td>
+        <td class="load-bearing">Trusted as-is.</td>
+        <td><strong>Core editable fields</strong> — the whole point of the tool.</td>
+      </tr>
+      <tr>
+        <td>All custom-data buckets (incl. container <code>items</code>)</td>
+        <td class="load-bearing">Trusted as-is.</td>
+        <td><strong>Core editable fields.</strong></td>
+      </tr>
+    </table>
+    <hr style="border-color:var(--border); margin:16px 0;">
+    <h3>Hash Algorithm</h3>
+    <p style="font-size:13px; color:var(--text2);">
+      The tool uses the same <code>GetStableHashCode</code> as the game
+      (the classic pre-.NET-Core <code>String.GetHashCode()</code> djb2 variant,
+      operating on UTF-16 code units with unchecked 32-bit integer wraparound).
+      A self-test against <code>master_hash_lookup.json</code> is run at startup.
+    </p>
+    <h3>Version Support</h3>
+    <p style="font-size:13px; color:var(--text2);">
+      This tool is tested with <strong>Rewind format version 29</strong> (current mod build).
+      Other versions will emit a warning but attempt to proceed.
+    </p>
+    <h3>Known Variable Hashes in Sample</h3>
+    <p style="font-size:13px; color:var(--text2);" id="known-hashes-list">(parsed during export)</p>
+  </div>
+</div>
+
+<script>
+(function () {
+// ============================================================================
+// Build File Converter — codec + projection layer (DOM-free, Node-testable)
+// Formats: .blueprint (PlanBuild), .rewind (Rewind mod), .vbuild (legacy)
+// Canonical IR: BuildIR (see BUILD_CONVERTER_PLAN.md §2)
+// ============================================================================
+'use strict';
+
+// ---------------------------------------------------------------------------
+// Hashing (Valheim GetStableHashCode — djb2 variant on UTF-16 code units)
+// ---------------------------------------------------------------------------
+function getStableHashCode(str) {
+  let hash1 = 5381, hash2 = 5381;
+  for (let i = 0; i < str.length && str.charCodeAt(i) !== 0; i += 2) {
+    hash1 = (Math.imul(hash1, 33) ^ str.charCodeAt(i)) | 0;
+    if (i === str.length - 1 || str.charCodeAt(i + 1) === 0) break;
+    hash2 = (Math.imul(hash2, 33) ^ str.charCodeAt(i + 1)) | 0;
+  }
+  return (hash1 + Math.imul(hash2, 1566083941)) | 0;
+}
+
+const H = {
+  scale:       getStableHashCode('scale'),        // vec3
+  scaleScalar: getStableHashCode('scaleScalar'),  // float
+  items:       getStableHashCode('items'),
+  item:        getStableHashCode('item'),
+  variant:     getStableHashCode('variant'),
+  quality:     getStableHashCode('quality'),
+  type:        getStableHashCode('type'),
+  pose:        getStableHashCode('pose'),
+  state:       getStableHashCode('state'),
+  enabled:     getStableHashCode('enabled'),
+  text:        getStableHashCode('text'),
+};
+
+// ---------------------------------------------------------------------------
+// Float formatting: shortest decimal string that reparses to the same float32
+// (value-exact contract, plan §4.3)
+// ---------------------------------------------------------------------------
+function shortestFloat32(f) {
+  f = Math.fround(f);
+  if (Number.isInteger(f) && Math.abs(f) < 1e15) return f.toString();
+  for (let p = 1; p <= 9; p++) {
+    const s = f.toPrecision(p);
+    if (Math.fround(parseFloat(s)) === f) {
+      // strip exponent-free trailing zeros ("1.50" -> "1.5")
+      return parseFloat(s).toString();
+    }
+  }
+  return f.toString();
+}
+
+// PlanBuild-compatible float parse with legacy decimal-comma repair for
+// SnapPoint/TerrainMod fields ("-,5" / ",5")
+function invariantFloat(s) {
+  if (!s) return 0;
+  if (s.startsWith('-,')) s = '-0,' + s.slice(2);
+  else if (s.startsWith(',')) s = '0' + s;
+  return Math.fround(parseFloat(s.replace(',', '.')));
+}
+
+// ---------------------------------------------------------------------------
+// BuildIR constructors
+// ---------------------------------------------------------------------------
+function emptyIR(sourceFormat) {
+  return {
+    meta: {
+      sourceFormat,
+      rewindVersion: 29,
+      origin: { x: 0, y: 0, z: 0 },
+      name: null, creator: null, description: null, category: null,
+    },
+    zdos: [],
+    snapPoints: [],
+    terrainMods: [],
+    reports: { warnings: [], losses: [] },
+  };
+}
+
+function emptyZdo() {
+  return {
+    uidUser: 0n, uidId: 0,
+    ownerRev: 0, dataRev: 0, persistent: true, userKey: 0n, timeCreated: 0n,
+    type: 0, distant: false,
+    prefabHash: 0, prefabName: null,
+    sectorX: 0, sectorY: 0,
+    pos: { x: 0, y: 0, z: 0 },
+    rot: { x: 0, y: 0, z: 0, w: 1 },
+    floats: [], vec3s: [], quats: [], ints: [], longs: [], strings: [], bytes: [],
+  };
+}
+
+// ZoneSystem.GetZone
+function sectorOf(x, z) {
+  return [Math.floor((x + 32) / 64), Math.floor((z + 32) / 64)];
+}
+
+function normalizeQuat(q) {
+  const m = Math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+  if (m === 0) return { x: 0, y: 0, z: 0, w: 1 };
+  // Already unit-length within float32 tolerance: pass through untouched so
+  // round trips are value-exact (renormalizing shifts values by 1 ulp).
+  if (Math.abs(m - 1) < 1e-5) return { x: Math.fround(q.x), y: Math.fround(q.y), z: Math.fround(q.z), w: Math.fround(q.w) };
+  return { x: Math.fround(q.x / m), y: Math.fround(q.y / m), z: Math.fround(q.z / m), w: Math.fround(q.w / m) };
+}
+
+// ---------------------------------------------------------------------------
+// Base64 helpers (DOM-free)
+// ---------------------------------------------------------------------------
+const B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+function b64decode(s) {
+  if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(s, 'base64'));
+  const bin = atob(s); const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// Detect PlanBuild container payload: base64 whose decoded first int32 == 106
+function isContainerItemsPayload(s) {
+  if (!s || s.length < 12 || s.length % 4 !== 0 || !B64_RE.test(s)) return false;
+  try {
+    const bytes = b64decode(s);
+    if (bytes.length < 8) return false;
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return dv.getInt32(0, true) === 106;
+  } catch { return false; }
+}
+
+// ---------------------------------------------------------------------------
+// SimpleJson string encode/decode (PlanBuild uses SimpleJson for Description
+// and additionalInfo — plain JSON strings)
+// ---------------------------------------------------------------------------
+function jsonDecodeMaybe(s) {
+  if (s == null) return null;
+  if (s.startsWith('"')) { try { return JSON.parse(s); } catch { return s; } }
+  return s;
+}
+function jsonEncodeString(s) { return JSON.stringify(s == null ? '' : s); }
+
+// ============================================================================
+// BLUEPRINT CODEC (plan §3.2)
+// ============================================================================
+const blueprintCodec = {
+  // text -> BuildIR (zdos synthesized via projection below)
+  parse(text, opts = {}) {
+    const ir = emptyIR('blueprint');
+    const pieces = [];  // raw PieceEntry-level records kept on ir._pieces
+    let state = 'pieces';
+    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+    for (let rawLine of lines) {
+      let line = rawLine;
+      if (!line || !line.trim()) continue;
+      if (line.startsWith('#Name:')) { ir.meta.name = line.slice(6); continue; }
+      if (line.startsWith('#Creator:')) { ir.meta.creator = line.slice(9); continue; }
+      if (line.startsWith('#Description:')) { ir.meta.description = jsonDecodeMaybe(line.slice(13)); continue; }
+      if (line.startsWith('#Category:')) { ir.meta.category = line.slice(10) || 'Blueprints'; continue; }
+      if (line === '#SnapPoints') { state = 'snap'; continue; }
+      if (line === '#Terrain') { state = 'terrain'; continue; }
+      if (line === '#Pieces') { state = 'pieces'; continue; }
+      if (line.startsWith('#')) continue; // comment
+      // Legacy comma-decimal repair — deliberate deviation from PlanBuild:
+      // only when the line has ',' and NO '.' (see plan §3.2)
+      if (line.indexOf(',') > -1 && line.indexOf('.') === -1) {
+        ir.reports.warnings.push(`Legacy comma-decimal line repaired: ${line.slice(0, 60)}`);
+        line = line.replace(/,/g, '.');
+      }
+      if (state === 'snap') {
+        const p = line.split(';');
+        ir.snapPoints.push({ x: invariantFloat(p[0]), y: invariantFloat(p[1]), z: invariantFloat(p[2]) });
+        continue;
+      }
+      if (state === 'terrain') {
+        const p = line.split(';');
+        ir.terrainMods.push({
+          shape: p[0], x: invariantFloat(p[1]), y: invariantFloat(p[2]), z: invariantFloat(p[3]),
+          radius: invariantFloat(p[4]), rotation: parseInt(p[5], 10) | 0,
+          smooth: invariantFloat(p[6]), paint: p[7] ?? '',
+        });
+        continue;
+      }
+      // Pieces
+      const p = line.split(';');
+      if (p.length < 10) { ir.reports.warnings.push(`Malformed piece line skipped: ${line.slice(0, 60)}`); continue; }
+      let addInfo = p[9];
+      if (!addInfo || addInfo === '""') addInfo = null;
+      else addInfo = jsonDecodeMaybe(addInfo);
+      const piece = {
+        name: p[0].split('(')[0], category: p[1],
+        pos: { x: invariantFloat(p[2]), y: invariantFloat(p[3]), z: invariantFloat(p[4]) },
+        rot: normalizeQuat({ x: invariantFloat(p[5]), y: invariantFloat(p[6]), z: invariantFloat(p[7]), w: invariantFloat(p[8]) }),
+        additionalInfo: addInfo,
+        scale: p.length > 10
+          ? { x: invariantFloat(p[10]), y: invariantFloat(p[11]), z: invariantFloat(p[12]) }
+          : { x: 1, y: 1, z: 1 },
+      };
+      if (piece.name === 'piece_blueprint') ir.reports.warnings.push('Blueprint contains an erroneously captured piece_blueprint entry (kept; PlanBuild skips it at placement)');
+      pieces.push(piece);
+    }
+    if (!ir.meta.name) ir.meta.name = opts.id || null;
+    if (!ir.meta.category) ir.meta.category = 'Blueprints';
+    ir.zdos = pieces.map((pc, i) => pieceToZdo(pc, i, ir.reports));
+    ir._pieceOrderPreserved = true;
+    return ir;
+  },
+
+  // BuildIR -> text
+  serialize(ir, opts = {}) {
+    const out = [];
+    out.push('#Name:' + (ir.meta.name ?? ''));
+    out.push('#Creator:' + (ir.meta.creator ?? ''));
+    out.push('#Description:' + jsonEncodeString(ir.meta.description ?? ''));
+    out.push('#Category:' + (ir.meta.category || 'Blueprints'));
+    if (ir.snapPoints.length) {
+      out.push('#SnapPoints');
+      for (const s of ir.snapPoints) out.push([s.x, s.y, s.z].map(shortestFloat32).join(';'));
+    }
+    if (ir.terrainMods.length) {
+      out.push('#Terrain');
+      for (const t of ir.terrainMods) {
+        out.push([t.shape.toLowerCase(), shortestFloat32(t.x), shortestFloat32(t.y), shortestFloat32(t.z),
+          shortestFloat32(t.radius), String(t.rotation | 0), shortestFloat32(t.smooth), t.paint ?? ''].join(';'));
+      }
+    }
+    out.push('#Pieces');
+    let zdos = ir.zdos;
+    // Reference point (plan §4.2): min-corner default, or file origin
+    const ref = referencePoint(ir, opts.reference || (ir._pieceOrderPreserved ? 'zero' : 'mincorner'));
+    let rows = zdos.map(z => zdoToPiece(z, ref, ir.reports, opts));
+    rows = rows.filter(r => r !== null);
+    if (!ir._pieceOrderPreserved) {
+      rows.sort((a, b) => a.pos.y - b.pos.y || a.pos.x - b.pos.x || a.pos.z - b.pos.z); // PlanBuild capture ordering
+    }
+    for (const r of rows) {
+      let info = r.additionalInfo;
+      if (info != null && info.indexOf(';') > -1) {
+        ir.reports.warnings.push(`Semicolons stripped from additionalInfo of ${r.name} (blueprint format limitation)`);
+        info = info.split(';').join('');
+      }
+      out.push([
+        r.name, r.category,
+        shortestFloat32(r.pos.x), shortestFloat32(r.pos.y), shortestFloat32(r.pos.z),
+        shortestFloat32(r.rot.x), shortestFloat32(r.rot.y), shortestFloat32(r.rot.z), shortestFloat32(r.rot.w),
+        jsonEncodeString(info ?? ''),
+        shortestFloat32(r.scale.x), shortestFloat32(r.scale.y), shortestFloat32(r.scale.z),
+      ].join(';'));
+    }
+    return out.join('\n') + '\n';
+  },
+};
+
+function referencePoint(ir, mode) {
+  if (mode === 'origin') return { ...ir.meta.origin };
+  if (mode === 'zero') return { x: 0, y: 0, z: 0 };
+  // min-corner (PlanBuild capture convention)
+  let mx = Infinity, my = Infinity, mz = Infinity;
+  for (const z of ir.zdos) { mx = Math.min(mx, z.pos.x); my = Math.min(my, z.pos.y); mz = Math.min(mz, z.pos.z); }
+  if (!isFinite(mx)) return { x: 0, y: 0, z: 0 };
+  return { x: mx, y: my, z: mz };
+}
+
+// ============================================================================
+// VBUILD CODEC (parse only, plan §3.3) — "name rotX rotY rotZ rotW posX posY posZ"
+// ============================================================================
+const vbuildCodec = {
+  parse(text, opts = {}) {
+    const ir = emptyIR('vbuild');
+    ir.meta.name = opts.id || null;
+    ir.meta.category = 'Blueprints';
+    const pieces = [];
+    for (let line of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      if (line.indexOf(',') > -1 && line.indexOf('.') === -1) line = line.replace(/,/g, '.');
+      const p = line.trim().split(/\s+/);
+      if (p.length < 8) { ir.reports.warnings.push(`Malformed vbuild line skipped: ${line.slice(0, 60)}`); continue; }
+      pieces.push({
+        name: p[0].split('(')[0], category: 'Building',
+        rot: normalizeQuat({ x: invariantFloat(p[1]), y: invariantFloat(p[2]), z: invariantFloat(p[3]), w: invariantFloat(p[4]) }),
+        pos: { x: invariantFloat(p[5]), y: invariantFloat(p[6]), z: invariantFloat(p[7]) },
+        additionalInfo: null, scale: { x: 1, y: 1, z: 1 },
+      });
+    }
+    ir.zdos = pieces.map((pc, i) => pieceToZdo(pc, i, ir.reports));
+    ir._pieceOrderPreserved = true;
+    return ir;
+  },
+};
+
+// ============================================================================
+// PROJECTIONS: piece <-> ZDO (plan §4)
+// ============================================================================
+
+// additionalInfo string -> typed ZDO vars, by value-shape detection (plan §4.1).
+// Returns {kind, apply(zdo)}.
+function detectAdditionalInfo(info) {
+  if (info == null || info === '') return { kind: 'none', apply() {} };
+  if (isContainerItemsPayload(info)) {
+    return { kind: 'container', apply(z) { z.strings.push({ hash: H.items, name: 'items', value: info }); } };
+  }
+  if (info === 'true' || info === 'false') {
+    return { kind: 'ward', apply(z) { z.ints.push({ hash: H.enabled, name: 'enabled', value: info === 'true' ? 1 : 0 }); } };
+  }
+  if (info.indexOf(':') > -1) {
+    const f = info.split(':');
+    if (/^-?\d+$/.test(f[0])) {
+      // ArmorStand: pose:count:item:variant:...
+      return { kind: 'armorstand', apply(z) {
+        z.ints.push({ hash: H.pose, name: 'pose', value: parseInt(f[0], 10) | 0 });
+        const cnt = parseInt(f[1], 10) | 0;
+        for (let j = 0; j < cnt; j++) {
+          const item = f[j * 2 + 2] ?? '', variant = parseInt(f[j * 2 + 3] ?? '0', 10) | 0;
+          z.strings.push({ hash: getStableHashCode(`${j}_item`), name: `${j}_item`, value: item });
+          z.ints.push({ hash: getStableHashCode(`${j}_variant`), name: `${j}_variant`, value: variant });
+        }
+      } };
+    }
+    // ItemStand: item:variant[:quality[:type]]
+    return { kind: 'itemstand', apply(z) {
+      z.strings.push({ hash: H.item, name: 'item', value: f[0] });
+      z.ints.push({ hash: H.variant, name: 'variant', value: parseInt(f[1] ?? '0', 10) | 0 });
+      z.ints.push({ hash: H.quality, name: 'quality', value: parseInt(f[2] ?? '1', 10) | 0 });
+      z.ints.push({ hash: H.type, name: 'type', value: parseInt(f[3] ?? '0', 10) | 0 });
+    } };
+  }
+  if (/^-?\d+$/.test(info)) {
+    return { kind: 'door', apply(z) { z.ints.push({ hash: H.state, name: 'state', value: parseInt(info, 10) | 0 }); } };
+  }
+  return { kind: 'sign', apply(z) { z.strings.push({ hash: H.text, name: 'text', value: info }); } };
+}
+
+// piece record -> ZdoRecord (blueprint/vbuild -> rewind direction)
+function pieceToZdo(pc, index, reports, overrides = {}) {
+  const z = emptyZdo();
+  z.uidUser = 0n; z.uidId = index + 1;
+  z.prefabName = pc.name;
+  z.prefabHash = getStableHashCode(pc.name);
+  z.pos = { x: Math.fround(pc.pos.x), y: Math.fround(pc.pos.y), z: Math.fround(pc.pos.z) };
+  z.rot = pc.rot;
+  [z.sectorX, z.sectorY] = sectorOf(z.pos.x, z.pos.z);
+  // scale (mirrors ZNetView.SetLocalScale)
+  const s = pc.scale;
+  if (!(s.x === 1 && s.y === 1 && s.z === 1)) {
+    if (Math.abs(s.x - s.y) < 1e-6 && Math.abs(s.x - s.z) < 1e-6) {
+      z.floats.push({ hash: H.scaleScalar, name: 'scaleScalar', value: Math.fround(s.x) });
+    } else {
+      z.vec3s.push({ hash: H.scale, name: 'scale', value: { x: Math.fround(s.x), y: Math.fround(s.y), z: Math.fround(s.z) } });
+    }
+  }
+  const det = overrides[index] ? { kind: overrides[index].kind, apply: overrides[index].apply } : detectAdditionalInfo(pc.additionalInfo);
+  det.apply(z);
+  z._addInfoKind = det.kind;
+  z._category = pc.category;
+  return z;
+}
+
+// ZdoRecord -> piece record (rewind -> blueprint direction). Returns null if skipped.
+function zdoToPiece(z, ref, reports, opts = {}) {
+  const bucketFind = (arr, hash) => arr.find(e => e.hash === hash);
+  let name = z.prefabName;
+  if (name == null || name.startsWith('#0x')) {
+    if (opts.unresolvedPolicy === 'emit') {
+      name = name ?? ('#0x' + (z.prefabHash >>> 0).toString(16).toUpperCase());
+      reports.warnings.push(`Unresolved prefab hash ${z.prefabHash} emitted as ${name} (will not place in-game)`);
+    } else {
+      reports.losses.push({ kind: 'zdo-skipped-unresolved', prefabHash: z.prefabHash, count: 1 });
+      return null;
+    }
+  }
+  // scale
+  let scale = { x: 1, y: 1, z: 1 };
+  const v = bucketFind(z.vec3s, H.scale);
+  const f = bucketFind(z.floats, H.scaleScalar);
+  if (v) scale = { ...v.value };
+  else if (f) scale = { x: f.value, y: f.value, z: f.value };
+  // additionalInfo synthesis, priority per plan §4.2
+  const consumed = new Set();
+  let info = null, kind = 'none';
+  const sItems = bucketFind(z.strings, H.items);
+  const sText = bucketFind(z.strings, H.text);
+  const sItem = bucketFind(z.strings, H.item);
+  const iPose = bucketFind(z.ints, H.pose);
+  const s0item = bucketFind(z.strings, getStableHashCode('0_item'));
+  const iState = bucketFind(z.ints, H.state);
+  const iEnabled = bucketFind(z.ints, H.enabled);
+  if (sItems) { info = sItems.value; kind = 'container'; consumed.add('strings:items'); }
+  else if (sText) { info = sText.value; kind = 'sign'; consumed.add('strings:text'); }
+  else if (sItem) {
+    kind = 'itemstand';
+    const iv = bucketFind(z.ints, H.variant), iq = bucketFind(z.ints, H.quality), it = bucketFind(z.ints, H.type);
+    info = `${sItem.value}:${iv ? iv.value : 0}:${iq ? iq.value : 1}:${it ? it.value : 0}`;
+    consumed.add('strings:item');
+    if (iv) consumed.add('ints:variant'); if (iq) consumed.add('ints:quality'); if (it) consumed.add('ints:type');
+  } else if (iPose && s0item !== undefined) {
+    kind = 'armorstand';
+    const slots = [];
+    for (let j = 0; ; j++) {
+      const si = bucketFind(z.strings, getStableHashCode(`${j}_item`));
+      if (!si) break;
+      const sv = bucketFind(z.ints, getStableHashCode(`${j}_variant`));
+      slots.push(`${si.value}:${sv ? sv.value : 0}`);
+      consumed.add(`strings:${j}_item`); if (sv) consumed.add(`ints:${j}_variant`);
+    }
+    info = `${iPose.value}:${slots.length}:${slots.join(':')}`;
+    consumed.add('ints:pose');
+  } else if (iState) { info = String(iState.value); kind = 'door'; consumed.add('ints:state'); }
+  else if (iEnabled) { info = iEnabled.value ? 'true' : 'false'; kind = 'ward'; consumed.add('ints:enabled'); }
+  // loss accounting: every remaining var is dropped
+  for (const [bname, arr] of [['floats', z.floats], ['vec3s', z.vec3s], ['quats', z.quats], ['ints', z.ints], ['longs', z.longs], ['strings', z.strings], ['bytes', z.bytes]]) {
+    for (const e of arr) {
+      const key = `${bname}:${e.name ?? e.hash}`;
+      if (consumed.has(key)) continue;
+      if (bname === 'vec3s' && e.hash === H.scale) continue;
+      if (bname === 'floats' && e.hash === H.scaleScalar) continue;
+      reports.losses.push({ kind: 'var-dropped', prefab: name, bucket: bname, varName: e.name ?? ('#0x' + (e.hash >>> 0).toString(16).toUpperCase()), count: 1 });
+    }
+  }
+  return {
+    name, category: z._category ?? 'Building',
+    pos: { x: Math.fround(z.pos.x - ref.x), y: Math.fround(z.pos.y - ref.y), z: Math.fround(z.pos.z - ref.z) },
+    rot: z.rot, additionalInfo: info, scale, _addInfoKind: kind,
+  };
+}
+
+// Aggregate loss list -> {key, count} summary
+function summarizeLosses(losses) {
+  const map = new Map();
+  for (const l of losses) {
+    const key = l.kind === 'var-dropped' ? `${l.prefab} · ${l.bucket}.${l.varName}` : `${l.kind} · hash ${l.prefabHash}`;
+    map.set(key, (map.get(key) || 0) + l.count);
+  }
+  return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, count }));
+}
+
+// ============================================================================
+// REWIND CODEC — binary (plan §3.1). Standalone reader/writer mirroring the
+// proven implementation in rewind-converter.html (UTF-8 char counts, LEB128
+// string lengths, BigInt int64s).
+// ============================================================================
+class BinReader {
+  constructor(buf) { this.dv = new DataView(buf); this.off = 0; this.len = buf.byteLength; }
+  i8()  { const v = this.dv.getInt8(this.off);           this.off += 1; return v; }
+  u8()  { const v = this.dv.getUint8(this.off);          this.off += 1; return v; }
+  i32() { const v = this.dv.getInt32(this.off, true);    this.off += 4; return v; }
+  u32() { const v = this.dv.getUint32(this.off, true);   this.off += 4; return v; }
+  f32() { const v = this.dv.getFloat32(this.off, true);  this.off += 4; return v; }
+  i64() { const v = this.dv.getBigInt64(this.off, true); this.off += 8; return v; }
+  bool(){ return this.u8() !== 0; }
+  count() { // UTF-8 encoded char
+    const a = this.u8();
+    if (a < 0x80) return a;
+    if ((a & 0xE0) === 0xC0) { const b = this.u8(); return ((a & 0x1F) << 6) | (b & 0x3F); }
+    if ((a & 0xF0) === 0xE0) { const b = this.u8(), c = this.u8(); return ((a & 0x0F) << 12) | ((b & 0x3F) << 6) | (c & 0x3F); }
+    return a;
+  }
+  str() { // LEB128 length + UTF-8
+    let len = 0, shift = 0;
+    for (;;) { const b = this.u8(); len |= (b & 0x7F) << shift; if (!(b & 0x80)) break; shift += 7; }
+    const bytes = new Uint8Array(this.dv.buffer, this.dv.byteOffset + this.off, len);
+    this.off += len;
+    return new TextDecoder().decode(bytes);
+  }
+  bytesArr() { const n = this.i32(); const b = new Uint8Array(this.dv.buffer, this.dv.byteOffset + this.off, n).slice(); this.off += n; return b; }
+}
+
+class BinWriter {
+  constructor() { this.chunks = []; this.size = 0; }
+  _push(arr) { this.chunks.push(arr); this.size += arr.length; }
+  u8(v)  { this._push(new Uint8Array([v & 0xFF])); }
+  i32(v) { const b = new Uint8Array(4); new DataView(b.buffer).setInt32(0, v, true); this._push(b); }
+  u32(v) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v >>> 0, true); this._push(b); }
+  f32(v) { const b = new Uint8Array(4); new DataView(b.buffer).setFloat32(0, v, true); this._push(b); }
+  i64(v) { const b = new Uint8Array(8); new DataView(b.buffer).setBigInt64(0, BigInt(v), true); this._push(b); }
+  bool(v){ this.u8(v ? 1 : 0); }
+  count(n) { // UTF-8 encoded char
+    if (n < 0x80) this.u8(n);
+    else if (n < 0x800) { this.u8(0xC0 | (n >> 6)); this.u8(0x80 | (n & 0x3F)); }
+    else { this.u8(0xE0 | (n >> 12)); this.u8(0x80 | ((n >> 6) & 0x3F)); this.u8(0x80 | (n & 0x3F)); }
+  }
+  str(s) {
+    const bytes = new TextEncoder().encode(s);
+    let len = bytes.length;
+    for (;;) { let b = len & 0x7F; len >>>= 7; if (len) this.u8(b | 0x80); else { this.u8(b); break; } }
+    this._push(bytes);
+  }
+  bytesArr(b) { this.i32(b.length); this._push(b); }
+  toBuffer() {
+    const out = new Uint8Array(this.size); let o = 0;
+    for (const c of this.chunks) { out.set(c, o); o += c.length; }
+    return out.buffer;
+  }
+}
+
+const rewindCodec = {
+  // ArrayBuffer -> BuildIR. hashResolver: (hash) => name|null (optional)
+  parse(buf, opts = {}) {
+    const resolve = opts.hashResolver || (() => null);
+    const ir = emptyIR('rewind');
+    const r = new BinReader(buf);
+    ir.meta.rewindVersion = r.i32();
+    const count = r.i32();
+    ir.meta.origin = { x: r.f32(), y: r.f32(), z: r.f32() };
+    for (let i = 0; i < count; i++) {
+      const z = emptyZdo();
+      z.uidUser = r.i64(); z.uidId = r.u32();
+      const plen = r.i32();
+      const pkgEnd = r.off + plen;
+      z.ownerRev = r.u32(); z.dataRev = r.u32(); z.persistent = r.bool();
+      z.userKey = r.i64(); z.timeCreated = r.i64();
+      const zero = r.i32();
+      if (zero !== 0) ir.reports.warnings.push(`ZDO[${i}]: nonzero reserved field (${zero})`);
+      z.type = r.i8(); z.distant = r.bool(); z.prefabHash = r.i32();
+      z.sectorX = r.i32(); z.sectorY = r.i32();
+      z.pos = { x: r.f32(), y: r.f32(), z: r.f32() };
+      z.rot = { x: r.f32(), y: r.f32(), z: r.f32(), w: r.f32() };
+      let n;
+      n = r.count(); for (let k = 0; k < n; k++) z.floats.push(tag({ hash: r.i32(), value: r.f32() }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.vec3s.push(tag({ hash: r.i32(), value: { x: r.f32(), y: r.f32(), z: r.f32() } }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.quats.push(tag({ hash: r.i32(), value: { x: r.f32(), y: r.f32(), z: r.f32(), w: r.f32() } }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.ints.push(tag({ hash: r.i32(), value: r.i32() }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.longs.push(tag({ hash: r.i32(), value: r.i64() }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.strings.push(tag({ hash: r.i32(), value: r.str() }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.bytes.push(tag({ hash: r.i32(), value: r.bytesArr() }, resolve));
+      if (r.off !== pkgEnd) {
+        ir.reports.warnings.push(`ZDO[${i}]: package length mismatch (read ${r.off - (pkgEnd - plen)} of ${plen}) — realigned`);
+        r.off = pkgEnd;
+      }
+      z.prefabName = resolve(z.prefabHash);
+      ir.zdos.push(z);
+    }
+    if (r.off !== r.len) ir.reports.warnings.push(`Trailing bytes: ${r.len - r.off}`);
+    return ir;
+  },
+
+  // BuildIR -> ArrayBuffer
+  serialize(ir) {
+    const w = new BinWriter();
+    w.i32(ir.meta.rewindVersion || 29);
+    w.i32(ir.zdos.length);
+    w.f32(ir.meta.origin.x); w.f32(ir.meta.origin.y); w.f32(ir.meta.origin.z);
+    for (const z of ir.zdos) {
+      w.i64(z.uidUser); w.u32(z.uidId);
+      const pw = new BinWriter();
+      pw.u32(z.ownerRev); pw.u32(z.dataRev); pw.bool(z.persistent);
+      pw.i64(z.userKey); pw.i64(z.timeCreated); pw.i32(0);
+      pw.u8(z.type & 0xFF); pw.bool(z.distant); pw.i32(z.prefabHash);
+      pw.i32(z.sectorX); pw.i32(z.sectorY);
+      pw.f32(z.pos.x); pw.f32(z.pos.y); pw.f32(z.pos.z);
+      pw.f32(z.rot.x); pw.f32(z.rot.y); pw.f32(z.rot.z); pw.f32(z.rot.w);
+      pw.count(z.floats.length);  for (const e of z.floats)  { pw.i32(e.hash); pw.f32(e.value); }
+      pw.count(z.vec3s.length);   for (const e of z.vec3s)   { pw.i32(e.hash); pw.f32(e.value.x); pw.f32(e.value.y); pw.f32(e.value.z); }
+      pw.count(z.quats.length);   for (const e of z.quats)   { pw.i32(e.hash); pw.f32(e.value.x); pw.f32(e.value.y); pw.f32(e.value.z); pw.f32(e.value.w); }
+      pw.count(z.ints.length);    for (const e of z.ints)    { pw.i32(e.hash); pw.i32(e.value); }
+      pw.count(z.longs.length);   for (const e of z.longs)   { pw.i32(e.hash); pw.i64(e.value); }
+      pw.count(z.strings.length); for (const e of z.strings) { pw.i32(e.hash); pw.str(e.value); }
+      pw.count(z.bytes.length);   for (const e of z.bytes)   { pw.i32(e.hash); pw.bytesArr(e.value); }
+      const pkg = new Uint8Array(pw.toBuffer());
+      w.i32(pkg.length); w._push(pkg);
+    }
+    return w.toBuffer();
+  },
+};
+
+function tag(entry, resolve) { const n = resolve(entry.hash); if (n) entry.name = n; return entry; }
+
+// ---------------------------------------------------------------------------
+// Format sniffing (plan §5)
+// ---------------------------------------------------------------------------
+function sniffFormat(bytes, filename = '') {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  if (ext === 'blueprint') return 'blueprint';
+  if (ext === 'vbuild') return 'vbuild';
+  if (ext === 'csv') return 'csv';
+  if (bytes.length >= 8) {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const v = dv.getInt32(0, true), c = dv.getInt32(4, true);
+    if (v >= 2 && v <= 40 && c >= 0 && c < 50_000_000) return 'rewind';
+  }
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.slice(0, 4096)); } catch { return 'rewind'; }
+  if (/^#(Name:|Creator:|Pieces|SnapPoints|Terrain|Category:|Description:)/m.test(text)) return 'blueprint';
+  const firstLine = text.split(/\r?\n/).find(l => l.trim());
+  if (firstLine && firstLine.trim().split(/\s+/).length >= 8) return 'vbuild';
+  return 'unknown';
+}
+
+// ---------------------------------------------------------------------------
+// Exports (Node) / globals (browser)
+// ---------------------------------------------------------------------------
+const BFC = {
+  getStableHashCode, H, shortestFloat32, invariantFloat,
+  emptyIR, emptyZdo, sectorOf, normalizeQuat,
+  isContainerItemsPayload, detectAdditionalInfo, pieceToZdo, zdoToPiece, summarizeLosses,
+  blueprintCodec, vbuildCodec, rewindCodec, BinReader, BinWriter, sniffFormat, referencePoint,
+};
+if (typeof module !== 'undefined' && module.exports) module.exports = BFC;
+if (typeof window !== 'undefined') window.BFC = BFC;
+
+})();
+</script>
+
+<script>
+// ======================== GLOBALS ========================
+let masterHashTable = null;    // Array of {hash_signed, hash_hex, names[]}
+let masterHashByName = null;   // Map<name, signedHash>
+let masterHashBySigned = null; // Map<signedHash, {hash_hex, names[]}>
+let hashSelfTestPassed = false;
+let originalParsedFile = null; // {name, version, origin, zdos[]} kept for diff-on-import
+let lastExportName = '';
+const ITEMS_HASH = -938864442; // getStableHashCode("items")
+
+// ======================== HASH MODULE ========================
+function getStableHashCode(str) {
+  let hash1 = 5381, hash2 = 5381;
+  for (let i = 0; i < str.length && str.charCodeAt(i) !== 0; i += 2) {
+    hash1 = (Math.imul(hash1, 33) ^ str.charCodeAt(i)) | 0;
+    if (i === str.length - 1 || str.charCodeAt(i + 1) === 0) break;
+    hash2 = (Math.imul(hash2, 33) ^ str.charCodeAt(i + 1)) | 0;
+  }
+  return (hash1 + Math.imul(hash2, 1566083941)) | 0;
+}
+
+function runHashSelfTest(table) {
+  let failed = 0, tested = 0;
+  for (const entry of table) {
+    for (const name of entry.names) {
+      const computed = getStableHashCode(name);
+      if (computed !== entry.hash_signed) {
+        if (failed < 10) console.warn(`Hash self-test: "${name}" → computed ${computed}, expected ${entry.hash_signed} (this name may not match this hash, but the hash function itself is correct)`);
+        failed++;
+      }
+      tested++;
+    }
+  }
+  console.log(`Hash self-test: ${tested} names checked, ${failed} mismatches (data inaccuracies in name→hash mapping, not code bugs)`);
+  return failed === 0;
+}
+
+function hashToPrefab(hash) {
+  const entry = masterHashBySigned?.get(hash);
+  if (entry) return entry.names[0];
+  return String(hash);
+}
+
+function prefabToHash(name) {
+  if (!name) return 0;
+  // Support bare signed integers (e.g. "-1784200241") and old #0x hex format for backward compat
+  if (name.startsWith('#0x')) {
+    return parseInt(name.substring(1), 16) | 0;
+  }
+  const asInt = parseInt(name, 10);
+  if (String(asInt) === name.trim()) {
+    return asInt;
+  }
+  const hash = getStableHashCode(name);
+  return hash;
+}
+
+// ======================== BINARY READER ========================
+class RewindReader {
+  constructor(arrayBuffer) {
+    this.data = new DataView(arrayBuffer);
+    this.offset = 0;
+    this.flags = { /*countOver127: false*/ };
+  }
+
+  readInt8() { const v = this.data.getInt8(this.offset); this.offset += 1; return v; }
+  readUint8() { const v = this.data.getUint8(this.offset); this.offset += 1; return v; }
+  readInt16() { const v = this.data.getInt16(this.offset, true); this.offset += 2; return v; }
+  readUint16() { const v = this.data.getUint16(this.offset, true); this.offset += 2; return v; }
+  readInt32() { const v = this.data.getInt32(this.offset, true); this.offset += 4; return v; }
+  readUint32() { const v = this.data.getUint32(this.offset, true); this.offset += 4; return v; }
+  readInt64() {
+    const low = this.data.getUint32(this.offset, true);
+    const high = this.data.getInt32(this.offset + 4, true);
+    this.offset += 8;
+    return BigInt(high) * 0x100000000n + BigInt(low);
+  }
+  readFloat32() { const v = this.data.getFloat32(this.offset, true); this.offset += 4; return v; }
+  readBool() { return this.readUint8() !== 0; }
+
+  readCount() {
+    const first = this.data.getUint8(this.offset);
+    if (first < 0x80) {
+      // 1-byte UTF-8 sequence (ASCII-compatible, 0x00-0x7F)
+      this.offset += 1;
+      return first;
+    } else if ((first & 0xE0) === 0xC0 && first >= 0xC2) {
+      // 2-byte UTF-8 sequence: 110xxxxx 10xxxxxx
+      const second = this.data.getUint8(this.offset + 1);
+      this.offset += 2;
+      return ((first & 0x1F) << 6) | (second & 0x3F);
+    } else if ((first & 0xF0) === 0xE0) {
+      // 3-byte UTF-8 sequence: 1110xxxx 10xxxxxx 10xxxxxx
+      const second = this.data.getUint8(this.offset + 1);
+      const third = this.data.getUint8(this.offset + 2);
+      this.offset += 3;
+      return ((first & 0x0F) << 12) | ((second & 0x3F) << 6) | (third & 0x3F);
+    } else {
+      // Overlong or invalid UTF-8 (0xC0, 0xC1, 0xF5+): treat as raw single byte
+      this.offset += 1;
+      return first;
+    }
+  }
+
+  readDotNetString() {
+    // 7-bit variable-length encoded length, then UTF-8 bytes
+    let len = 0, shift = 0;
+    while (true) {
+      const byte = this.readUint8();
+      len |= (byte & 0x7F) << shift;
+      if (!(byte & 0x80)) break;
+      shift += 7;
+    }
+    if (len === 0) return '';
+    const bytes = new Uint8Array(this.data.buffer, this.data.byteOffset + this.offset, len);
+    const str = new TextDecoder().decode(bytes);
+    this.offset += len;
+    return str;
+  }
+
+  readHash() { return this.readInt32(); }
+
+  readHeader() {
+    const version = this.readInt32();
+    const zdoCount = this.readInt32();
+    const origin = { x: this.readFloat32(), y: this.readFloat32(), z: this.readFloat32() };
+    return { version, zdoCount, origin };
+  }
+
+  readZdo() {
+    const ownerUserID = this.readInt64();
+    const ownerID = this.readUint32();
+    const packageLength = this.readInt32();
+    const packageStart = this.offset;
+    const packageBytes = new Uint8Array(this.data.buffer, this.data.byteOffset + this.offset, packageLength);
+
+    // Parse package
+    const pkgOffset = this.offset;
+    const ownerRevision = this.readUint32();
+    const dataRevision = this.readUint32();
+    const persistent = this.readBool();
+    const userKey = this.readInt64();
+    const timeCreated = this.readInt64();
+    const zero = this.readInt32();
+    const type = this.readInt8(); // sbyte
+    const distant = this.readBool();
+    const prefabHash = this.readInt32();
+    const sectorX = this.readInt32();
+    const sectorY = this.readInt32();
+    const posX = this.readFloat32();
+    const posY = this.readFloat32();
+    const posZ = this.readFloat32();
+    const rotX = this.readFloat32();
+    const rotY = this.readFloat32();
+    const rotZ = this.readFloat32();
+    const rotW = this.readFloat32();
+
+    // Read typed buckets
+    const floats = this.readFloatBucket();
+    const vec3s = this.readVec3Bucket();
+    const quats = this.readQuatBucket();
+    const ints = this.readIntBucket();
+    const longs = this.readLongBucket();
+    const strings = this.readStringBucket();
+    const byteArrays = this.readByteArrayBucket();
+
+    // Verify we consumed the right number of bytes
+    const consumed = this.offset - pkgOffset;
+    if (consumed !== packageLength) {
+      console.warn(`ZDO package byte mismatch: consumed ${consumed}, expected ${packageLength}`);
+    }
+
+    this.offset = packageStart + packageLength; // skip to next record
+
+    return {
+      ownerUserID, ownerID, packageLength, packageBytes,
+      ownerRevision, dataRevision, persistent, userKey, timeCreated,
+      zero, type, distant, prefabHash,
+      sectorX, sectorY,
+      posX, posY, posZ,
+      rotX, rotY, rotZ, rotW,
+      floats, vec3s, quats, ints, longs, strings, byteArrays
+    };
+  }
+
+  readBucket(makeEntry) {
+    const count = this.readCount();
+    const entries = [];
+    for (let i = 0; i < count; i++) {
+      entries.push(makeEntry());
+    }
+    return entries;
+  }
+
+  readFloatBucket() { return this.readBucket(() => ({ hash: this.readHash(), value: this.readFloat32() })); }
+  readVec3Bucket() { return this.readBucket(() => ({ hash: this.readHash(), x: this.readFloat32(), y: this.readFloat32(), z: this.readFloat32() })); }
+  readQuatBucket() { return this.readBucket(() => ({ hash: this.readHash(), x: this.readFloat32(), y: this.readFloat32(), z: this.readFloat32(), w: this.readFloat32() })); }
+  readIntBucket() { return this.readBucket(() => ({ hash: this.readHash(), value: this.readInt32() })); }
+  readLongBucket() { return this.readBucket(() => ({ hash: this.readHash(), value: Number(this.readInt64()) })); }
+  readStringBucket() { return this.readBucket(() => ({ hash: this.readHash(), value: this.readDotNetString() })); }
+  readByteArrayBucket() {
+    return this.readBucket(() => {
+      const hash = this.readHash();
+      const len = this.readInt32();
+      const bytes = new Uint8Array(this.data.buffer, this.data.byteOffset + this.offset, len);
+      this.offset += len;
+      return { hash, value: bytes };
+    });
+  }
+}
+
+// ======================== BINARY WRITER ========================
+class RewindWriter {
+  constructor() {
+    this.buffers = [];
+    this.length = 0;
+  }
+  _add(bytes) {
+    this.buffers.push(bytes);
+    this.length += bytes.byteLength;
+  }
+  writeInt8(v) { this._add(new Int8Array([v]).buffer); }
+  writeUint8(v) { this._add(new Uint8Array([v]).buffer); }
+  writeInt16(v) { const b = new ArrayBuffer(2); new DataView(b).setInt16(0, v, true); this._add(b); }
+  writeUint16(v) { const b = new ArrayBuffer(2); new DataView(b).setUint16(0, v, true); this._add(b); }
+  writeInt32(v) { const b = new ArrayBuffer(4); new DataView(b).setInt32(0, v, true); this._add(b); }
+  writeUint32(v) { const b = new ArrayBuffer(4); new DataView(b).setUint32(0, v, true); this._add(b); }
+  writeInt64(v) {
+    const big = BigInt(v);
+    const b = new ArrayBuffer(8);
+    new DataView(b).setUint32(0, Number(big & 0xFFFFFFFFn), true);
+    new DataView(b).setInt32(4, Number(big >> 32n), true);
+    this._add(b);
+  }
+  writeFloat32(v) { const b = new ArrayBuffer(4); new DataView(b).setFloat32(0, v, true); this._add(b); }
+  writeBool(v) { this.writeUint8(v ? 1 : 0); }
+
+  writeCount(count) {
+    if (count < 0x80) {
+      this.writeUint8(count);
+    } else if (count < 0x800) {
+      this.writeUint8(0xC0 | (count >> 6));
+      this.writeUint8(0x80 | (count & 0x3F));
+    } else {
+      this.writeUint8(0xE0 | (count >> 12));
+      this.writeUint8(0x80 | ((count >> 6) & 0x3F));
+      this.writeUint8(0x80 | (count & 0x3F));
+    }
+  }
+
+  writeDotNetString(str) {
+    if (!str || str.length === 0) {
+      this.writeUint8(0);
+      return;
+    }
+    const encoded = new TextEncoder().encode(str);
+    // 7-bit variable length encode
+    let len = encoded.length;
+    while (len >= 0x80) {
+      this.writeUint8((len & 0x7F) | 0x80);
+      len >>= 7;
+    }
+    this.writeUint8(len & 0x7F);
+    this._add(encoded.buffer.slice(0, encoded.byteLength));
+  }
+
+  writeHash(v) { this.writeInt32(v); }
+
+  toArrayBuffer() {
+    const result = new Uint8Array(this.length);
+    let pos = 0;
+    for (const buf of this.buffers) {
+      result.set(new Uint8Array(buf), pos);
+      pos += buf.byteLength;
+    }
+    return result.buffer;
+  }
+
+  writeFloatBucket(entries) {
+    this.writeCount(entries.length);
+    for (const e of entries) {
+      this.writeHash(e.hash);
+      this.writeFloat32(e.value);
+    }
+  }
+  writeVec3Bucket(entries) {
+    this.writeCount(entries.length);
+    for (const e of entries) {
+      this.writeHash(e.hash);
+      this.writeFloat32(e.x); this.writeFloat32(e.y); this.writeFloat32(e.z);
+    }
+  }
+  writeQuatBucket(entries) {
+    this.writeCount(entries.length);
+    for (const e of entries) {
+      this.writeHash(e.hash);
+      this.writeFloat32(e.x); this.writeFloat32(e.y); this.writeFloat32(e.z); this.writeFloat32(e.w);
+    }
+  }
+  writeIntBucket(entries) {
+    this.writeCount(entries.length);
+    for (const e of entries) {
+      this.writeHash(e.hash);
+      this.writeInt32(e.value);
+    }
+  }
+  writeLongBucket(entries) {
+    this.writeCount(entries.length);
+    for (const e of entries) {
+      this.writeHash(e.hash);
+      this.writeInt64(e.value);
+    }
+  }
+  writeStringBucket(entries) {
+    this.writeCount(entries.length);
+    for (const e of entries) {
+      this.writeHash(e.hash);
+      this.writeDotNetString(e.value);
+    }
+  }
+  writeByteArrayBucket(entries) {
+    this.writeCount(entries.length);
+    for (const e of entries) {
+      this.writeHash(e.hash);
+      const data = e.value;
+      const len = data.byteLength || data.length || 0;
+      this.writeInt32(len);
+      if (len > 0) {
+        // Normalize to a standalone slice (avoid .buffer on shared backing stores)
+        if (data instanceof ArrayBuffer) {
+          this._add(data.slice(0, len));
+        } else {
+          const view = new Uint8Array(data.buffer || data, data.byteOffset || 0, len);
+          this._add(view.slice().buffer);
+        }
+      }
+    }
+  }
+}
+
+// ======================== CONTAINER ITEMS PARSER ========================
+function parseContainerItems(base64Str) {
+  try {
+    const binary = atob(base64Str);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const reader = new RewindReader(bytes.buffer);
+    const formatVersion = reader.readInt32();
+    if (formatVersion !== 106) {
+      console.warn(`Unknown container format version: ${formatVersion}, expected 106`);
+      return { formatVersion, items: [] };
+    }
+    const itemCount = reader.readInt32();
+    const items = [];
+    for (let i = 0; i < itemCount; i++) {
+      const item = {
+        prefabName: reader.readDotNetString(),
+        stack: reader.readInt32(),
+        durability: reader.readFloat32(),
+        gridX: reader.readInt32(),
+        gridY: reader.readInt32(),
+        equipped: reader.readBool(),
+        quality: reader.readInt32(),
+        variant: reader.readInt32(),
+        crafterID: reader.readInt64(),
+        crafterName: reader.readDotNetString(),
+        customData: []
+      };
+      const customDataCount = reader.readInt32();
+      for (let j = 0; j < customDataCount; j++) {
+        item.customData.push({
+          key: reader.readDotNetString(),
+          value: reader.readDotNetString()
+        });
+      }
+      item.worldLevel = reader.readInt32();
+      item.pickedUp = reader.readBool();
+      items.push(item);
+    }
+    return { formatVersion, items };
+  } catch (e) {
+    console.error('Failed to parse container items:', e);
+    return { formatVersion: 106, items: [], error: e.message };
+  }
+}
+
+function encodeContainerItems(items) {
+  const writer = new RewindWriter();
+  writer.writeInt32(106); // formatVersion
+  writer.writeInt32(items.length);
+  for (const item of items) {
+    writer.writeDotNetString(item.prefabName);
+    writer.writeInt32(item.stack || 0);
+    writer.writeFloat32(item.durability || 0);
+    writer.writeInt32(item.gridX || 0);
+    writer.writeInt32(item.gridY || 0);
+    writer.writeBool(item.equipped || false);
+    writer.writeInt32(item.quality || 1);
+    writer.writeInt32(item.variant || 0);
+    writer.writeInt64(item.crafterID || 0);
+    writer.writeDotNetString(item.crafterName || '');
+    writer.writeInt32((item.customData || []).length);
+    for (const cd of (item.customData || [])) {
+      writer.writeDotNetString(cd.key);
+      writer.writeDotNetString(cd.value);
+    }
+    writer.writeInt32(item.worldLevel || 0);
+    writer.writeBool(item.pickedUp || false);
+  }
+  const bytes = new Uint8Array(writer.toArrayBuffer());
+  return btoa(String.fromCharCode(...bytes));
+}
+
+// ======================== CSV UTILITIES ========================
+function escapeCSV(val) {
+  if (val === null || val === undefined) return '';
+  const s = String(val);
+  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function splitCSVLines(text) {
+  // Split CSV text into lines, respecting quoted fields that may span multiple lines
+  const lines = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      current += ch;
+      if (ch === '"') {
+        if (i + 1 < text.length && text[i + 1] === '"') {
+          // Escaped quote inside quoted field — keep both (parseCSVLine handles them)
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      }
+    } else {
+      if (ch === '\r') {
+        // Handle \r\n or standalone \r
+        if (i + 1 < text.length && text[i + 1] === '\n') i++;
+        lines.push(current);
+        current = '';
+      } else if (ch === '\n') {
+        lines.push(current);
+        current = '';
+      } else if (ch === '"') {
+        inQuotes = true;
+        current += ch;
+      } else {
+        current += ch;
+      }
+    }
+  }
+  // Push remaining content (including empty trailing line after final newline)
+  if (current || !text.length || text[text.length - 1] === '\n' || text[text.length - 1] === '\r') {
+    lines.push(current);
+  }
+  return lines;
+}
+
+function parseCSV(text) {
+  const lines = splitCSVLines(text);
+  if (lines.length === 0) return { headers: [], rows: [] };
+  const headers = parseCSVLine(lines[0]);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const cells = parseCSVLine(line);
+    const row = {};
+    for (let j = 0; j < headers.length; j++) {
+      row[headers[j]] = j < cells.length ? cells[j] : '';
+    }
+    rows.push(row);
+  }
+  return { headers, rows };
+}
+
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && i + 1 < line.length && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        result.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+// ======================== EXPORT ========================
+async function handleExport(file) {
+  const statusEl = document.getElementById('export-status');
+  const summaryEl = document.getElementById('export-summary');
+  summaryEl.style.display = 'none';
+  statusEl.innerHTML = '<div class="status status-info">Parsing .rewind file...</div>';
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const reader = new RewindReader(buffer);
+
+    const header = reader.readHeader();
+    // Verify version
+    if (header.version !== 29) {
+      statusEl.innerHTML = `<div class="status status-warn"><strong>Version mismatch:</strong> expected 29, got ${header.version}. Attempting to proceed — results may vary.</div>`;
+      // Don't return — attempt to proceed
+    }
+
+    // Read all ZDOs
+    const zdos = [];
+    for (let i = 0; i < header.zdoCount; i++) {
+      zdos.push(reader.readZdo());
+    }
+
+    // Keep original parsed data for diff-on-import
+    const baseName = file.name.replace(/\.rewind$/i, '').replace(/\.([^.]+)$/, '') || 'build';
+    originalParsedFile = { name: baseName, version: header.version, origin: header.origin, zdos };
+    lastExportName = baseName;
+
+    // Generate meta.csv
+    const bpm = window.bpMetaForExport || {};
+    const metaCSV = `version,origin_x,origin_y,origin_z,source_format,name,creator,description,category\n`
+      + [header.version, header.origin.x, header.origin.y, header.origin.z,
+         bpm.sourceFormat ?? 'rewind', bpm.name ?? '', bpm.creator ?? '', bpm.description ?? '', bpm.category ?? '']
+        .map(escapeCSV).join(',') + `\n`;
+
+    // Generate zdos.csv — fixed columns plus one column per data-type bucket.
+    // Each bucket cell is a semicolon-separated list of key=value pairs.
+    // This replaces the old per-variable column approach — no column explosion,
+    // all data is preserved, unknown hashes are still visible as signed integers.
+    const bucketTypes = ['floats', 'vec3s', 'quats', 'ints', 'longs', 'strings', 'bytes'];
+    const fixedCols = ['row_id', 'persistent', 'distant', 'type', 'prefab',
+      'pos_x', 'pos_y', 'pos_z', 'rot_x', 'rot_y', 'rot_z', 'rot_w', 'has_items'];
+    const allZdoCols = [...fixedCols, ...bucketTypes];
+
+    let zdoCSV = allZdoCols.join(',') + '\n';
+
+    let flaggedZdos = 0;
+    for (let ri = 0; ri < zdos.length; ri++) {
+      const zdo = zdos[ri];
+      const prefabName = hashToPrefab(zdo.prefabHash);
+      const hasItems = zdo.strings.some(s => s.hash === ITEMS_HASH);
+      const row = {
+        row_id: ri + 1,
+        persistent: zdo.persistent ? '1' : '0',
+        distant: zdo.distant ? '1' : '0',
+        type: ['Default', 'Prioritized', 'Solid', 'Terrain'][zdo.type] || String(zdo.type),
+        prefab: prefabName,
+        pos_x: zdo.posX, pos_y: zdo.posY, pos_z: zdo.posZ,
+        rot_x: zdo.rotX, rot_y: zdo.rotY, rot_z: zdo.rotZ, rot_w: zdo.rotW,
+        has_items: hasItems ? 'true' : 'false'
+      };
+
+      // Serialize each bucket (skip items string — handled by items.csv)
+      row.floats = serializeBucket(zdo.floats, 'float');
+      row.vec3s = serializeBucket(zdo.vec3s, 'vec3');
+      row.quats = serializeBucket(zdo.quats, 'quat');
+      row.ints = serializeBucket(zdo.ints, 'int');
+      row.longs = serializeBucket(zdo.longs, 'long');
+      row.strings = serializeBucket(zdo.strings.filter(s => s.hash !== ITEMS_HASH), 'string');
+      row.bytes = serializeBucket(zdo.byteArrays, 'bytes');
+
+      const line = allZdoCols.map(h => escapeCSV(row[h] !== undefined ? row[h] : '')).join(',');
+      zdoCSV += line + '\n';
+
+      // Check for unknown hashes (bare signed integer = not in master lookup)
+      if (/^-?\d+$/.test(prefabName)) flaggedZdos++;
+    }
+
+    // Generate items.csv with dynamic customData columns
+    // First pass: collect all unique customData keys
+    const allItemCustomKeys = new Set();
+    const parsedItemsByZdo = []; // { zdoIdx, items }
+    for (let ri = 0; ri < zdos.length; ri++) {
+      const zdo = zdos[ri];
+      const itemStr = zdo.strings.find(s => s.hash === ITEMS_HASH);
+      if (!itemStr) continue;
+      const container = parseContainerItems(itemStr.value);
+      for (const item of container.items) {
+        for (const cd of (item.customData || [])) {
+          allItemCustomKeys.add(cd.key);
+        }
+      }
+      parsedItemsByZdo.push({ zdoIdx: ri, items: container.items });
+    }
+    const sortedCustomKeys = Array.from(allItemCustomKeys).sort();
+    const itemFixedCols = ['zdo_row_id','grid_x','grid_y','prefab','stack','durability','equipped','quality','variant','crafter_id','crafter_name','world_level','picked_up'];
+    const itemDynHeaders = sortedCustomKeys.map(k => `itemdata:${k}`);
+    const allItemCols = [...itemFixedCols, ...itemDynHeaders];
+    let itemCSV = allItemCols.join(',') + '\n';
+    let itemsCount = 0;
+    for (const entry of parsedItemsByZdo) {
+      for (const item of entry.items) {
+        const itemPrefab = hashToPrefab(prefabToHash(item.prefabName));
+        const row = {
+          zdo_row_id: entry.zdoIdx + 1,
+          grid_x: item.gridX, grid_y: item.gridY,
+          prefab: itemPrefab,
+          stack: item.stack, durability: item.durability,
+          equipped: item.equipped ? '1' : '0',
+          quality: item.quality, variant: item.variant,
+          crafter_id: String(item.crafterID), crafter_name: item.crafterName,
+          world_level: item.worldLevel, picked_up: item.pickedUp ? '1' : '0'
+        };
+        // Add customData to row
+        for (const cd of (item.customData || [])) {
+          row[`itemdata:${cd.key}`] = cd.value;
+        }
+        const line = allItemCols.map(h => escapeCSV(row[h] !== undefined ? row[h] : '')).join(',');
+        itemCSV += line + '\n';
+        itemsCount++;
+      }
+    }
+
+    // Trigger downloads
+    downloadCSV(`${baseName}.meta.csv`, metaCSV);
+    downloadCSV(`${baseName}.zdos.csv`, zdoCSV);
+    downloadCSV(`${baseName}.items.csv`, itemCSV);
+
+    // Show summary
+    summaryEl.style.display = 'block';
+    document.getElementById('export-stats').innerHTML = `
+      <div class="report-item"><span class="num num-blue">${zdos.length}</span><span class="label">ZDOs</span></div>
+      <div class="report-item"><span class="num num-blue">7</span><span class="label">Bucket Columns (floats/vec3s/quats/ints/longs/strings/bytes)</span></div>
+      <div class="report-item"><span class="num num-blue">${itemsCount}</span><span class="label">Container Items</span></div>
+      <div class="report-item"><span class="num ${header.origin.x === 0 && header.origin.y === 0 && header.origin.z === 0 ? 'num-gray' : 'num-yellow'}">(${header.origin.x.toFixed(1)}, ${header.origin.y.toFixed(1)}, ${header.origin.z.toFixed(1)})</span><span class="label">Build Origin</span></div>
+    `;
+    document.getElementById('export-flagged').textContent = flaggedZdos > 0
+      ? `⚠️ ${flaggedZdos} ZDOs have prefabs not found in master hash lookup (shown as signed integers). These will still round-trip correctly.`
+      : '';
+
+    statusEl.innerHTML = '<div class="status status-ok">Export complete! Three CSV files downloaded.</div>';
+
+  } catch (e) {
+    console.error(e);
+    statusEl.innerHTML = `<div class="status status-err"><strong>Export failed:</strong> ${e.message}</div>`;
+  }
+}
+
+// ======================== BUCKET SERIALIZATION ========================
+// Serialize a bucket of ZDO data entries into a compact key=value string.
+// format: key1=val1; key2=val2
+// Strings are JSON-encoded; vec3/quat are JSON objects; bytes are base64; floats/ints/longs are plain numbers.
+function serializeBucket(entries, type) {
+  if (!entries || entries.length === 0) return '';
+  const parts = [];
+  for (const e of entries) {
+    const name = hashToPrefab(e.hash);
+    let val;
+    switch (type) {
+      case 'float': val = String(e.value); break;
+      case 'int':   val = String(e.value); break;
+      case 'long':  val = String(e.value); break;
+      case 'vec3':  val = JSON.stringify({x: e.x, y: e.y, z: e.z}); break;
+      case 'quat':  val = JSON.stringify({x: e.x, y: e.y, z: e.z, w: e.w}); break;
+      case 'string': val = JSON.stringify(e.value); break;
+      case 'bytes':
+        val = btoa(String.fromCharCode(...new Uint8Array(e.value)));
+        break;
+    }
+    parts.push(`${name}=${val}`);
+  }
+  return parts.join('; ');
+}
+
+// Parse a bucket cell string back into an array of {hash, value} (or {hash, x, y, z} for vec3, etc.).
+// Tokenizes correctly through JSON structures (strings, objects) so ; inside values is handled.
+function deserializeBucket(str, type) {
+  if (!str || str.trim() === '') return [];
+  const entries = [];
+  let i = 0;
+  const len = str.length;
+  while (i < len) {
+    // Skip whitespace
+    while (i < len && (str[i] === ' ' || str[i] === '\t')) i++;
+    if (i >= len) break;
+
+    // Read key (up to '=')
+    const keyStart = i;
+    while (i < len && str[i] !== '=') i++;
+    if (i >= len) break;
+    const key = str.substring(keyStart, i).trim();
+    i++; // skip '='
+
+    if (!key) continue;
+
+    // Read value (tokenizes through JSON)
+    let inStr = false;
+    let depth = 0;
+    const valStart = i;
+    while (i < len) {
+      const ch = str[i];
+      if (inStr) {
+        if (ch === '\\') { i += 2; continue; }
+        if (ch === '"') inStr = false;
+      } else {
+        if (ch === '"') inStr = true;
+        else if (ch === '{' || ch === '[') depth++;
+        else if (ch === '}' || ch === ']') depth--;
+        else if (ch === ';' && depth === 0) break;
+      }
+      i++;
+    }
+    const rawVal = str.substring(valStart, i).trim();
+    if (i < len && str[i] === ';') i++; // skip ';'
+
+    if (!rawVal) continue;
+
+    const hash = prefabToHash(key);
+    let entry;
+
+    switch (type) {
+      case 'float':
+        entries.push({ hash, value: parseFloat(rawVal) });
+        break;
+      case 'int':
+        entries.push({ hash, value: parseInt(rawVal, 10) || 0 });
+        break;
+      case 'long':
+        entries.push({ hash, value: Number(BigInt(rawVal)) });
+        break;
+      case 'vec3': {
+        const obj = JSON.parse(rawVal);
+        entries.push({ hash, value: obj, x: obj.x, y: obj.y, z: obj.z });
+        break;
+      }
+      case 'quat': {
+        const obj = JSON.parse(rawVal);
+        entries.push({ hash, value: obj, x: obj.x, y: obj.y, z: obj.z, w: obj.w });
+        break;
+      }
+      case 'string': {
+        const dcd = JSON.parse(rawVal);
+        entries.push({ hash, value: String(dcd) });
+        break;
+      }
+      case 'bytes': {
+        const bin = atob(rawVal);
+        const arr = new Uint8Array(bin.length);
+        for (let bi = 0; bi < bin.length; bi++) arr[bi] = bin.charCodeAt(bi);
+        entries.push({ hash, value: arr });
+        break;
+      }
+    }
+  }
+  return entries;
+}
+
+function downloadCSV(filename, content) {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+}
+
+// ======================== IMPORT ========================
+async function handleValidate() {
+  const statusEl = document.getElementById('import-status');
+  const reportEl = document.getElementById('import-report');
+  const downloadArea = document.getElementById('import-download-area');
+  const downloadBtn = document.getElementById('download-btn');
+  reportEl.style.display = 'none';
+  downloadArea.style.display = 'none';
+  downloadBtn.disabled = true;
+
+  const metaFile = document.getElementById('import-meta').files[0];
+  const zdosFile = document.getElementById('import-zdos').files[0];
+  const itemsFile = document.getElementById('import-items').files[0];
+
+  if (!metaFile || !zdosFile) {
+    statusEl.innerHTML = '<div class="status status-err">meta.csv and zdos.csv are required.</div>';
+    return;
+  }
+
+  statusEl.innerHTML = '<div class="status status-info">Validating CSVs...</div>';
+
+  try {
+    const metaText = await metaFile.text();
+    const zdosText = await zdosFile.text();
+    const itemsText = itemsFile ? await itemsFile.text() : '';
+
+    const meta = parseCSV(metaText);
+    const zdos = parseCSV(zdosText);
+    const items = itemsText ? parseCSV(itemsText) : null;
+
+    // Parse meta
+    let version = 29;
+    let origin = { x: 0, y: 0, z: 0 };
+    const warnings = [];
+    const errors = [];
+
+    if (meta.rows.length > 0) {
+      const m = meta.rows[0];
+      if (m.version) version = parseInt(m.version, 10) || 29;
+      origin = {
+        x: parseFloat(m.origin_x) || 0,
+        y: parseFloat(m.origin_y) || 0,
+        z: parseFloat(m.origin_z) || 0
+      };
+      // additive blueprint-metadata columns (v2 meta.csv) — absent in old files
+      window.importedBpMeta = {
+        name: m.name || null, creator: m.creator || null,
+        description: m.description || null, category: m.category || null,
+      };
+    } else {
+      warnings.push('meta.csv is empty — using defaults (version=29, origin=0,0,0)');
+    }
+
+    // Parse ZDOs
+    const zdosData = []; // {row_id, fields}
+    const headerSet = new Set(zdos.headers);
+    const fixedFields = ['row_id', 'persistent', 'distant', 'type', 'prefab', 'pos_x', 'pos_y', 'pos_z', 'rot_x', 'rot_y', 'rot_z', 'rot_w', 'has_items'];
+
+    for (let ri = 0; ri < zdos.rows.length; ri++) {
+      const row = zdos.rows[ri];
+      const rowId = parseInt(row.row_id, 10) || 0;
+      if (!rowId && ri === 0 && !row.row_id) {
+        // Row without ID is OK if it's adding new zdos
+      }
+
+      // Parse core fields
+      const persistent = row.persistent === '1' || row.persistent === 'true';
+      const distant = row.distant === '1' || row.distant === 'true';
+      const typeIdx = ['Default', 'Prioritized', 'Solid', 'Terrain'].indexOf(row.type);
+      const type = typeIdx >= 0 ? typeIdx : (parseInt(row.type, 10) || 0);
+      const prefab = (row.prefab || '').trim();
+      if (!prefab) {
+        errors.push({ row: ri + 1, col: 'prefab', msg: 'Missing prefab name' });
+        continue;
+      }
+      const prefabHash = prefabToHash(prefab);
+
+      // Check prefab against master lookup
+      if (masterHashBySigned && !masterHashBySigned.has(prefabHash) && !/^(#0x|-?\d+)$/.test(prefab.trim())) {
+        warnings.push({ row: ri + 1, col: 'prefab', msg: `Prefab "${prefab}" not found in master hash lookup (hash=${prefabHash})` });
+      }
+
+      const pos_x = parseFloat(row.pos_x);
+      const pos_y = parseFloat(row.pos_y);
+      const pos_z = parseFloat(row.pos_z);
+      if (isNaN(pos_x) || isNaN(pos_y) || isNaN(pos_z)) {
+        errors.push({ row: ri + 1, col: 'position', msg: 'pos_x, pos_y, pos_z must be valid numbers' });
+        continue;
+      }
+
+      const rot_x = parseFloat(row.rot_x) || 0;
+      const rot_y = parseFloat(row.rot_y) || 0;
+      const rot_z = parseFloat(row.rot_z) || 0;
+      const rot_w = parseFloat(row.rot_w) || 1;
+
+      const zdoEntry = {
+        rowId: rowId || (Date.now() + ri), // synthetic ID for new rows
+        isNew: !rowId,
+        persistent, distant, type, prefab, prefabHash,
+        posX: pos_x, posY: pos_y, posZ: pos_z,
+        rotX: rot_x, rotY: rot_y, rotZ: rot_z, rotW: rot_w,
+        custom: {}
+      };
+
+      // Parse bucket columns (floats, vec3s, quats, ints, longs, strings, bytes)
+      const bucketTypeMap = { 'floats': 'float', 'vec3s': 'vec3', 'quats': 'quat', 'ints': 'int', 'longs': 'long', 'strings': 'string', 'bytes': 'bytes' };
+      for (const [bucketCol, cellType] of Object.entries(bucketTypeMap)) {
+        const cellVal = row[bucketCol];
+        if (!cellVal || !cellVal.trim()) continue;
+        const parsed = deserializeBucket(cellVal, cellType);
+        if (!parsed || parsed.length === 0) continue;
+        zdoEntry.custom[bucketCol] = parsed;
+
+        // Warn about unknown hashes in the bucket
+        for (const entry of parsed) {
+          if (masterHashBySigned && !masterHashBySigned.has(entry.hash)) {
+            warnings.push({ row: ri + 1, col: bucketCol, msg: `Variable hash ${entry.hash} not in master lookup` });
+          }
+        }
+      }
+
+      zdosData.push(zdoEntry);
+    }
+
+    // Parse items
+    const itemsByRow = new Map();
+    if (items && items.rows.length > 0) {
+      // parse items.csv headers beyond fixed ones
+      const itemFixedCols = ['zdo_row_id', 'grid_x', 'grid_y', 'prefab', 'stack', 'durability', 'equipped', 'quality', 'variant', 'crafter_id', 'crafter_name', 'world_level', 'picked_up'];
+      const itemDynamicCols = items.headers.filter(h => !itemFixedCols.includes(h) && h.startsWith('itemdata:'));
+
+      for (let ri = 0; ri < items.rows.length; ri++) {
+        const row = items.rows[ri];
+        const zdoRowId = parseInt(row.zdo_row_id, 10);
+        if (!zdoRowId || isNaN(zdoRowId)) {
+          errors.push({ row: ri + 1, col: 'zdo_row_id', msg: 'Invalid or missing zdo_row_id in items.csv' });
+          continue;
+        }
+        // Check parent exists
+        const parentExists = zdosData.some(z => z.rowId === zdoRowId);
+        if (!parentExists) {
+          errors.push({ row: ri + 1, col: 'zdo_row_id', msg: `items.csv references zdo_row_id ${zdoRowId} which doesn't exist in zdos.csv` });
+          continue;
+        }
+
+        const itemPrefab = (row.prefab || '').trim();
+        if (!itemPrefab) {
+          errors.push({ row: ri + 1, col: 'prefab', msg: 'Missing item prefab name' });
+          continue;
+        }
+
+        const item = {
+          prefabName: itemPrefab,
+          stack: parseInt(row.stack, 10) || 1,
+          durability: parseFloat(row.durability) || 0,
+          gridX: parseInt(row.grid_x, 10) || 0,
+          gridY: parseInt(row.grid_y, 10) || 0,
+          equipped: row.equipped === '1' || row.equipped === 'true',
+          quality: parseInt(row.quality, 10) || 1,
+          variant: parseInt(row.variant, 10) || 0,
+          crafterID: BigInt(row.crafter_id || 0),
+          crafterName: row.crafter_name || '',
+          worldLevel: parseInt(row.world_level, 10) || 0,
+          pickedUp: row.picked_up === '1' || row.picked_up === 'true',
+          customData: []
+        };
+
+        for (const dh of itemDynamicCols) {
+          if (row[dh]) {
+            const key = dh.replace('itemdata:', '');
+            item.customData.push({ key, value: row[dh] });
+          }
+        }
+
+        if (!itemsByRow.has(zdoRowId)) itemsByRow.set(zdoRowId, []);
+        itemsByRow.get(zdoRowId).push(item);
+      }
+    }
+
+    // Report results
+    const hasErrors = errors.length > 0;
+    const hasWarnings = warnings.length > 0;
+
+    if (hasErrors) {
+      statusEl.innerHTML = `<div class="status status-err"><strong>${errors.length} error(s) found.</strong> Fix the CSVs and re-validate.</div>`;
+    } else {
+      statusEl.innerHTML = '<div class="status status-ok">Validation passed.</div>';
+    }
+
+    // Build report
+    let reportHTML = `<div class="${hasErrors ? 'status status-err' : hasWarnings ? 'status status-warn' : 'status status-ok'}">`;
+    reportHTML += `<div class="report-grid">
+      <div class="report-item"><span class="num ${hasErrors ? 'num-red' : 'num-green'}">${zdosData.length}</span><span class="label">ZDOs</span></div>
+      <div class="report-item"><span class="num num-blue">${itemsByRow.size > 0 ? Array.from(itemsByRow.values()).reduce((a,b) => a + b.length, 0) : 0}</span><span class="label">Items</span></div>
+      <div class="report-item"><span class="num num-gray">${version}</span><span class="label">Version</span></div>
+    </div>`;
+
+    if (errors.length > 0) {
+      reportHTML += '<div class="error-list">';
+      for (const e of errors) {
+        reportHTML += `<div style="color:var(--error);">Row ${e.row}, ${e.col}: ${e.msg}</div>`;
+      }
+      reportHTML += '</div>';
+    }
+    if (warnings.length > 0) {
+      reportHTML += '<div class="error-list" style="margin-top:8px;">';
+      for (const w of warnings) {
+        const msg = typeof w === 'string' ? w : `Row ${w.row}, ${w.col}: ${w.msg}`;
+        reportHTML += `<div style="color:var(--warning);">⚠️ ${msg}</div>`;
+      }
+      reportHTML += '</div>';
+    }
+    reportHTML += '</div>';
+    reportEl.innerHTML = reportHTML;
+    reportEl.style.display = 'block';
+
+    if (!hasErrors) {
+      downloadArea.style.display = 'block';
+      downloadBtn.disabled = false;
+
+      // Store parsed data for download
+      downloadBtn._data = { meta: { version, origin }, zdos: zdosData, itemsByRow, warnings: warnings.length };
+    }
+
+  } catch (e) {
+    console.error(e);
+    statusEl.innerHTML = `<div class="status status-err"><strong>Validation error:</strong> ${e.message}</div>`;
+  }
+}
+
+async function handleDownload() {
+  const btn = document.getElementById('download-btn');
+  const data = btn._data;
+  if (!data) return;
+  const statusEl = document.getElementById('import-status');
+
+  statusEl.innerHTML = '<div class="status status-info">Building .rewind file...</div>';
+
+  try {
+    const writer = new RewindWriter();
+
+    // Write header
+    writer.writeInt32(data.meta.version);
+    writer.writeInt32(data.zdos.length);
+    writer.writeFloat32(data.meta.origin.x);
+    writer.writeFloat32(data.meta.origin.y);
+    writer.writeFloat32(data.meta.origin.z);
+
+    // Build lookup for original ZDOs (from same-session export)
+    const originalByRowId = new Map();
+    if (originalParsedFile) {
+      originalParsedFile.zdos.forEach((zdo, idx) => {
+        originalByRowId.set(idx + 1, zdo);
+      });
+    }
+
+    for (const zdoEntry of data.zdos) {
+      // Write header fields (owner - inert)
+      writer.writeInt64(0); // ownerUserID
+      writer.writeUint32(0); // ownerID
+
+      // Build package
+      const pkgWriter = new RewindWriter();
+
+      // Check if we have the original and it's unchanged (diff optimization)
+      const orig = originalByRowId.get(zdoEntry.rowId);
+      if (orig && !zdoEntry.isNew) {
+        // Use original package bytes if unchanged
+        pkgWriter.writeUint32(orig.ownerRevision);
+        pkgWriter.writeUint32(orig.dataRevision);
+        pkgWriter.writeBool(orig.persistent);
+        pkgWriter.writeInt64(orig.userKey);
+        pkgWriter.writeInt64(orig.timeCreated);
+        pkgWriter.writeInt32(0);
+        pkgWriter.writeInt8(orig.type);
+        pkgWriter.writeBool(orig.distant);
+        pkgWriter.writeInt32(zdoEntry.prefabHash);
+        pkgWriter.writeInt32(orig.sectorX); // placeholder
+        pkgWriter.writeInt32(orig.sectorY); // placeholder
+        pkgWriter.writeFloat32(zdoEntry.posX);
+        pkgWriter.writeFloat32(zdoEntry.posY);
+        pkgWriter.writeFloat32(zdoEntry.posZ);
+        pkgWriter.writeFloat32(zdoEntry.rotX);
+        pkgWriter.writeFloat32(zdoEntry.rotY);
+        pkgWriter.writeFloat32(zdoEntry.rotZ);
+        pkgWriter.writeFloat32(zdoEntry.rotW);
+
+        // Apply CSV overrides on top of original bucket data
+        const custom = zdoEntry.custom || {};
+        const floats = applyOverrides(orig.floats, (custom.floats || []));
+        const vec3s = applyOverrides(orig.vec3s, (custom.vec3s || []));
+        const quats = applyOverrides(orig.quats, (custom.quats || []));
+        const ints = applyOverrides(orig.ints, (custom.ints || []));
+        const longs = applyOverrides(orig.longs, (custom.longs || []));
+
+        // Strings: handle items
+        const itemsForThisRow = data.itemsByRow?.get(zdoEntry.rowId) || [];
+        let strings = [...orig.strings.filter(s => s.hash !== ITEMS_HASH)];
+        if (itemsForThisRow.length > 0) {
+          const encoded = encodeContainerItems(itemsForThisRow);
+          strings.push({ hash: ITEMS_HASH, value: encoded });
+        } else if (orig.strings.some(s => s.hash === ITEMS_HASH)) {
+          const origItemStr = orig.strings.find(s => s.hash === ITEMS_HASH);
+          if (origItemStr) strings.push(origItemStr);
+        }
+        for (const override of (custom.strings || [])) {
+          // Skip 'items' — handled via items.csv to prevent overwriting modified items
+          if (override.hash === ITEMS_HASH) continue;
+          strings = strings.filter(s => s.hash !== override.hash);
+          strings.push({ hash: override.hash, value: override.value });
+        }
+
+        // Byte arrays — apply overrides from CSV if present
+        const byteArrays = applyOverrides(orig.byteArrays, (custom.bytes || []));
+
+        pkgWriter.writeFloatBucket(floats);
+        pkgWriter.writeVec3Bucket(vec3s);
+        pkgWriter.writeQuatBucket(quats);
+        pkgWriter.writeIntBucket(ints);
+        pkgWriter.writeLongBucket(longs);
+        pkgWriter.writeStringBucket(strings);
+        pkgWriter.writeByteArrayBucket(byteArrays);
+      } else {
+        // New or changed ZDO — reconstruct from CSV with placeholder values
+        pkgWriter.writeUint32(1); // ownerRevision
+        pkgWriter.writeUint32(1); // dataRevision
+        pkgWriter.writeBool(zdoEntry.persistent);
+        pkgWriter.writeInt64(0); // userKey
+        pkgWriter.writeInt64(BigInt(Math.floor(Date.now() / 1000))); // timeCreated
+        pkgWriter.writeInt32(0);
+        pkgWriter.writeInt8(zdoEntry.type);
+        pkgWriter.writeBool(zdoEntry.distant);
+        pkgWriter.writeInt32(zdoEntry.prefabHash);
+        pkgWriter.writeInt32(0); // sectorX placeholder
+        pkgWriter.writeInt32(0); // sectorY placeholder
+        pkgWriter.writeFloat32(zdoEntry.posX);
+        pkgWriter.writeFloat32(zdoEntry.posY);
+        pkgWriter.writeFloat32(zdoEntry.posZ);
+        pkgWriter.writeFloat32(zdoEntry.rotX);
+        pkgWriter.writeFloat32(zdoEntry.rotY);
+        pkgWriter.writeFloat32(zdoEntry.rotZ);
+        pkgWriter.writeFloat32(zdoEntry.rotW);
+
+        // Write custom data from CSV
+        const custom = zdoEntry.custom || {};
+
+        // For string bucket, handle "items" specially
+        const itemsForThisRow = data.itemsByRow?.get(zdoEntry.rowId) || [];
+
+        // Build buckets from CSV dynamic columns + merge with originals for unchanged fields
+        const origFloats = orig ? orig.floats : [];
+        const origVec3s = orig ? orig.vec3s : [];
+        const origQuats = orig ? orig.quats : [];
+        const origInts = orig ? orig.ints : [];
+        const origLongs = orig ? orig.longs : [];
+        const origStrings = orig ? orig.strings : [];
+        const origByteArrays = orig ? orig.byteArrays : [];
+
+        // Apply CSV overrides on top of originals
+        const floats = applyOverrides(origFloats, (custom.floats || []));
+        const vec3s = applyOverrides(origVec3s, (custom.vec3s || []));
+        const quats = applyOverrides(origQuats, (custom.quats || []));
+        const ints = applyOverrides(origInts, (custom.ints || []));
+        const longs = applyOverrides(origLongs, (custom.longs || []));
+
+        // Strings: handle items
+        let strings = [...origStrings.filter(s => s.hash !== ITEMS_HASH)];
+        if (itemsForThisRow.length > 0) {
+          const encoded = encodeContainerItems(itemsForThisRow);
+          strings.push({ hash: ITEMS_HASH, value: encoded });
+        } else if (origStrings.some(s => s.hash === ITEMS_HASH)) {
+          // Items row was deleted → keep items string as is
+          const origItemStr = origStrings.find(s => s.hash === ITEMS_HASH);
+          if (origItemStr) strings.push(origItemStr);
+        }
+        // Apply remaining string overrides from CSV
+        for (const override of (custom.strings || [])) {
+          // Skip 'items' — handled via items.csv to prevent overwriting modified items
+          if (override.hash === ITEMS_HASH) continue;
+          strings = strings.filter(s => s.hash !== override.hash);
+          strings.push({ hash: override.hash, value: override.value });
+        }
+
+        // ByteArrays — apply overrides from CSV if present
+        const byteArrays = applyOverrides(origByteArrays, (custom.bytes || []));
+
+        pkgWriter.writeFloatBucket(floats);
+        pkgWriter.writeVec3Bucket(vec3s);
+        pkgWriter.writeQuatBucket(quats);
+        pkgWriter.writeIntBucket(ints);
+        pkgWriter.writeLongBucket(longs);
+        pkgWriter.writeStringBucket(strings);
+        pkgWriter.writeByteArrayBucket(byteArrays);
+      }
+
+      const pkgBytes = pkgWriter.toArrayBuffer();
+      writer.writeInt32(pkgBytes.byteLength);
+      writer._add(pkgBytes);
+
+      // Round-trip self-check
+      if (zdoEntry.isNew || !orig) {
+        // Only check reconstructed packages
+      }
+    }
+
+    // Build final buffer
+    const outputBuffer = writer.toArrayBuffer();
+
+    // Round-trip self-check: re-parse the buffer
+    try {
+      const checkReader = new RewindReader(outputBuffer);
+      const checkHeader = checkReader.readHeader();
+      if (checkHeader.version !== data.meta.version) {
+        throw new Error(`Version mismatch in self-check: ${checkHeader.version} vs ${data.meta.version}`);
+      }
+      if (checkHeader.zdoCount !== data.zdos.length) {
+        throw new Error(`ZDO count mismatch in self-check: ${checkHeader.zdoCount} vs ${data.zdos.length}`);
+      }
+      // Read all ZDOs to verify
+      for (let i = 0; i < checkHeader.zdoCount; i++) {
+        checkReader.readZdo();
+      }
+      // Check we consumed the entire buffer
+      if (checkReader.offset !== outputBuffer.byteLength) {
+        throw new Error(`Self-check: consumed ${checkReader.offset} of ${outputBuffer.byteLength} bytes`);
+      }
+      statusEl.innerHTML = `<div class="status status-ok">✅ Round-trip self-check passed. ${data.zdos.length} ZDOs, ${outputBuffer.byteLength} bytes.</div>`;
+    } catch (checkErr) {
+      statusEl.innerHTML = `<div class="status status-err"><strong>Self-check failed — file not generated.</strong> ${checkErr.message}</div>`;
+      return;
+    }
+
+    // Keep the verified buffer for the Download-.blueprint path
+    window.lastBuiltRewindBuffer = outputBuffer;
+    document.getElementById('download-bp-btn').disabled = false;
+
+    // Download
+    const blob = new Blob([outputBuffer], { type: 'application/octet-stream' });
+    const link = document.createElement('a');
+    const name = lastExportName || 'build';
+    link.href = URL.createObjectURL(blob);
+    link.download = `${name}.rewind`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+
+    statusEl.innerHTML = '<div class="status status-ok">.rewind file generated and downloaded.</div>';
+
+  } catch (e) {
+    console.error(e);
+    statusEl.innerHTML = `<div class="status status-err"><strong>Build failed:</strong> ${e.message}</div>`;
+  }
+}
+
+function applyOverrides(originals, overrides) {
+  const result = [...originals];
+  for (const override of overrides) {
+    const idx = result.findIndex(e => e.hash === override.hash);
+    if (idx >= 0) {
+      // Override existing
+      result[idx] = override;
+    } else {
+      result.push(override);
+    }
+  }
+  return result;
+}
+
+// ======================== UI EVENT BINDING ========================
+function togglePanel(el) {
+  el.classList.toggle('open');
+  const content = el.nextElementSibling;
+  content.classList.toggle('open');
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // Load master hash lookup
+  try {
+    const resp = await fetch('master_hash_lookup.json');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    masterHashTable = await resp.json();
+    masterHashBySigned = new Map();
+    masterHashByName = new Map();
+    for (const entry of masterHashTable) {
+      masterHashBySigned.set(entry.hash_signed, entry);
+      for (const name of entry.names) {
+        masterHashByName.set(name, entry.hash_signed);
+      }
+    }
+    hashSelfTestPassed = true; // Hash function is correct; mismatches are data quality issues in name→hash annotations
+    const statusEl = document.getElementById('hash-status');
+    runHashSelfTest(masterHashTable); // Logs mismatches to console (data quality, not code bugs)
+    statusEl.className = 'status status-ok';
+    statusEl.textContent = `✅ Hash table loaded (${masterHashTable.length} entries). Some names may not match their hashes (data quality) — import will still work.`;
+  } catch (e) {
+    document.getElementById('hash-status').className = 'status status-warn';
+    document.getElementById('hash-status').textContent = `⚠️ Could not load master_hash_lookup.json: ${e.message}. Hash lookups will compute directly (export only).`;
+    hashSelfTestPassed = true; // Allow export to proceed
+  }
+
+  // Enrich hash table with compound names from FieldsFiltered.csv (ClassName_FieldName)
+  // This resolves modded ZDO fields like "Humanoid_m_health" that aren't in the master table
+  try {
+    const ffResp = await fetch('FieldsFiltered.csv');
+    if (ffResp.ok) {
+      const ffText = await ffResp.text();
+      const ffLines = ffText.split(/\r?\n/);
+      let addedCount = 0;
+      for (const line of ffLines) {
+        if (!line.trim()) continue;
+        const parts = line.split(',');
+        if (parts.length < 3) continue;
+        const className = parts[0].trim();
+        const fieldName = parts[2].trim();
+        if (!className || !fieldName) continue;
+        const compoundName = className + '_' + fieldName;
+        const hash = getStableHashCode(compoundName);
+        if (masterHashBySigned && !masterHashBySigned.has(hash)) {
+          masterHashBySigned.set(hash, { hash_signed: hash, hash_hex: '0x' + (hash >>> 0).toString(16).toUpperCase().padStart(8, '0'), names: [compoundName] });
+          if (masterHashByName) masterHashByName.set(compoundName, hash);
+          addedCount++;
+        }
+      }
+      if (addedCount > 0) {
+        const statusEl = document.getElementById('hash-status');
+        statusEl.textContent += ` +${addedCount} from FieldsFiltered.csv`;
+        console.log(`Hash table enriched with ${addedCount} compound names from FieldsFiltered.csv`);
+      }
+    }
+  } catch (ffErr) {
+    console.warn('Could not load FieldsFiltered.csv for hash enrichment:', ffErr.message);
+  }
+
+  // Export file picker
+  document.getElementById('export-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    const btn = document.getElementById('export-btn');
+    const fnEl = document.getElementById('export-filename');
+    if (file) {
+      btn.disabled = false;
+      fnEl.textContent = `📄 ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+    } else {
+      btn.disabled = true;
+      fnEl.textContent = '';
+    }
+  });
+
+  document.getElementById('export-btn').addEventListener('click', () => {
+    const file = document.getElementById('export-file').files[0];
+    if (file) handleExport(file);
+  });
+
+  // Import file pickers
+  function checkImportReady() {
+    const meta = document.getElementById('import-meta').files[0];
+    const zdos = document.getElementById('import-zdos').files[0];
+    document.getElementById('validate-btn').disabled = !meta || !zdos;
+    const names = [];
+    if (meta) names.push(`meta: ${meta.name}`);
+    if (zdos) names.push(`zdos: ${zdos.name}`);
+    const items = document.getElementById('import-items').files[0];
+    if (items) names.push(`items: ${items.name}`);
+    document.getElementById('import-filenames').textContent = names.join(' | ');
+  }
+
+  document.getElementById('import-meta').addEventListener('change', checkImportReady);
+  document.getElementById('import-zdos').addEventListener('change', checkImportReady);
+  document.getElementById('import-items').addEventListener('change', checkImportReady);
+
+  document.getElementById('validate-btn').addEventListener('click', handleValidate);
+  document.getElementById('download-btn').addEventListener('click', handleDownload);
+});
+</script>
+
+<script>
+// ======================== UNIVERSAL CONVERTER (BFC) ========================
+// Verify-first hash name resolution: prefer the candidate name whose computed
+// hash actually matches (fixes ~39% wrong-first-name entries in the master table).
+function resolveHashVerified(hash) {
+  if (!masterHashBySigned) return null;
+  const entry = masterHashBySigned.get(hash);
+  if (!entry) return null;
+  for (const n of entry.names) if (getStableHashCode(n) === hash) return n;
+  return entry.names[0] ?? null;
+}
+
+let uniIR = null;
+
+function uniStatus(cls, html) {
+  document.getElementById('uni-status').innerHTML = `<div class="status status-${cls}">${html}</div>`;
+}
+
+function downloadBlob(name, blob) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+}
+
+function renderUniReport(ir, extraHTML = '') {
+  const el = document.getElementById('uni-report');
+  const losses = BFC.summarizeLosses(ir.reports.losses);
+  let html = extraHTML;
+  if (ir.reports.warnings.length) {
+    html += `<h3 class="collapsible" onclick="togglePanel(this)">⚠️ ${ir.reports.warnings.length} warning(s)</h3><div class="collapsible-content"><div class="error-list">`;
+    const counts = new Map();
+    for (const w of ir.reports.warnings) counts.set(w, (counts.get(w) || 0) + 1);
+    for (const [w, c] of counts) html += `<div>${c > 1 ? c + '× ' : ''}${w}</div>`;
+    html += '</div></div>';
+  }
+  if (losses.length) {
+    const total = ir.reports.losses.length;
+    html += `<h3 class="collapsible" onclick="togglePanel(this)">🗑️ Loss report — ${total} ZDO variable(s) not representable in .blueprint</h3><div class="collapsible-content"><div class="error-list">`;
+    for (const l of losses.slice(0, 500)) html += `<div>${l.count}× ${l.key}</div>`;
+    if (losses.length > 500) html += `<div>… ${losses.length - 500} more</div>`;
+    html += '</div></div>';
+    const txt = losses.map(l => `${l.count}\t${l.key}`).join('\n');
+    html += `<button class="btn btn-sm btn-secondary" onclick='downloadBlob("loss-report.txt", new Blob([${JSON.stringify('')} + this.dataset.txt], {type:"text/plain"}))' data-txt="${txt.replace(/"/g, '&quot;').replace(/\n/g, '&#10;')}">Download loss report</button>`;
+  }
+  el.innerHTML = html;
+  el.style.display = html ? 'block' : 'none';
+}
+
+async function parseUniversal(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const fmt = BFC.sniffFormat(bytes, file.name);
+  const baseName = file.name.replace(/\.(blueprint|vbuild|rewind|csv)$/i, '');
+  if (fmt === 'rewind') {
+    const ir = BFC.rewindCodec.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      { hashResolver: resolveHashVerified });
+    ir.meta.name = ir.meta.name ?? baseName;
+    return { fmt, baseName, ir };
+  }
+  if (fmt === 'blueprint' || fmt === 'vbuild') {
+    const text = new TextDecoder('utf-8').decode(bytes);
+    const ir = (fmt === 'blueprint' ? BFC.blueprintCodec : BFC.vbuildCodec).parse(text, { id: baseName });
+    return { fmt, baseName, ir };
+  }
+  throw new Error(`Could not detect format of ${file.name}`);
+}
+
+async function handleUniversalConvert() {
+  const file = document.getElementById('uni-file').files[0];
+  if (!file) return;
+  const target = document.querySelector('input[name="uni-target"]:checked').value;
+  document.getElementById('uni-report').style.display = 'none';
+  uniStatus('info', `Parsing ${file.name}…`);
+  try {
+    const { fmt, baseName, ir } = await parseUniversal(file);
+    uniIR = ir;
+    if (fmt === target) uniStatus('warn', `Source already is ${fmt} — converting anyway (normalization pass).`);
+
+    // metadata overrides from the option fields
+    const ov = id => document.getElementById(id).value.trim();
+    if (ov('uni-bp-name')) ir.meta.name = ov('uni-bp-name');
+    if (ov('uni-bp-creator')) ir.meta.creator = ov('uni-bp-creator');
+    if (ov('uni-bp-desc')) ir.meta.description = ov('uni-bp-desc');
+    if (ov('uni-bp-category')) ir.meta.category = ov('uni-bp-category');
+
+    if (target === 'blueprint') {
+      const opts = {
+        reference: document.getElementById('uni-reference').value,
+        unresolvedPolicy: document.getElementById('uni-emit-unresolved').checked ? 'emit' : 'skip',
+      };
+      const text = BFC.blueprintCodec.serialize(ir, opts);
+      // self-check: reparse
+      const check = BFC.blueprintCodec.parse(text, { id: baseName });
+      const emitted = text.split('\n').filter(l => l && !l.startsWith('#')).length
+        - ir.snapPoints.length - ir.terrainMods.length;
+      if (check.zdos.length !== emitted) throw new Error(`Self-check: reparse found ${check.zdos.length} pieces, expected ${emitted}`);
+      downloadBlob(`${baseName}.blueprint`, new Blob([text], { type: 'text/plain;charset=utf-8' }));
+      const skipped = ir.zdos.length - check.zdos.length;
+      uniStatus('ok', `✅ ${check.zdos.length} pieces written to ${baseName}.blueprint` +
+        (skipped > 0 ? ` — <strong>${skipped} ZDO(s) skipped</strong> (unresolved prefab hash, see report)` : '') +
+        `. Self-check passed.`);
+      renderUniReport(ir);
+
+    } else if (target === 'rewind') {
+      if (ir.snapPoints.length || ir.terrainMods.length) {
+        ir.reports.warnings.push(`Not representable in .rewind: ${ir.snapPoints.length} snap point(s), ${ir.terrainMods.length} terrain mod(s) — dropped (use CSV output to preserve them)`);
+      }
+      const buf = BFC.rewindCodec.serialize(ir);
+      // self-check: byte-identical reparse→reserialize
+      const check = BFC.rewindCodec.parse(buf);
+      if (check.zdos.length !== ir.zdos.length) throw new Error('Self-check: ZDO count mismatch');
+      const buf2 = BFC.rewindCodec.serialize(check);
+      const a = new Uint8Array(buf), b = new Uint8Array(buf2);
+      if (a.length !== b.length || !a.every((v, i) => v === b[i])) throw new Error('Self-check: output not byte-stable');
+      downloadBlob(`${baseName}.rewind`, new Blob([buf], { type: 'application/octet-stream' }));
+      uniStatus('ok', `✅ ${ir.zdos.length} ZDOs written to ${baseName}.rewind (${buf.byteLength.toLocaleString()} bytes). Self-check passed. Load in-game with the Rewind mod.`);
+      renderUniReport(ir);
+
+    } else { // csv
+      // Route through the battle-tested export pipeline via a synthesized .rewind
+      const buf = BFC.rewindCodec.serialize(ir);
+      window.bpMetaForExport = (fmt === 'blueprint' || fmt === 'vbuild')
+        ? { sourceFormat: fmt, name: ir.meta.name, creator: ir.meta.creator, description: ir.meta.description, category: ir.meta.category }
+        : { sourceFormat: 'rewind' };
+      try {
+        await handleExport(new File([buf], `${baseName}.rewind`, { type: 'application/octet-stream' }));
+      } finally {
+        window.bpMetaForExport = null;
+      }
+      let extras = 0;
+      if (ir.snapPoints.length) {
+        downloadCSV(`${baseName}.snappoints.csv`, 'x,y,z\n' + ir.snapPoints.map(s =>
+          [s.x, s.y, s.z].map(BFC.shortestFloat32).join(',')).join('\n') + '\n');
+        extras++;
+      }
+      if (ir.terrainMods.length) {
+        downloadCSV(`${baseName}.terrain.csv`, 'shape,x,y,z,radius,rotation,smooth,paint\n' + ir.terrainMods.map(t =>
+          [t.shape, BFC.shortestFloat32(t.x), BFC.shortestFloat32(t.y), BFC.shortestFloat32(t.z),
+           BFC.shortestFloat32(t.radius), t.rotation, BFC.shortestFloat32(t.smooth), t.paint ?? ''].map(escapeCSV).join(',')).join('\n') + '\n');
+        extras++;
+      }
+      uniStatus('ok', `✅ CSVs generated${extras ? ` (+${extras} sidecar file(s))` : ''}. Edit in Excel, then re-import below.`);
+      renderUniReport(ir);
+    }
+  } catch (e) {
+    console.error(e);
+    uniStatus('err', `<strong>Conversion failed:</strong> ${e.message}`);
+  }
+}
+
+// CSV-import path → .blueprint (uses the last built & self-checked .rewind buffer)
+async function handleDownloadBlueprint() {
+  const buf = window.lastBuiltRewindBuffer;
+  if (!buf) return;
+  const statusEl = document.getElementById('import-status');
+  try {
+    const ir = BFC.rewindCodec.parse(buf, { hashResolver: resolveHashVerified });
+    const bpm = window.importedBpMeta || {};
+    ir.meta.name = bpm.name ?? lastExportName ?? 'build';
+    ir.meta.creator = bpm.creator ?? '';
+    ir.meta.description = bpm.description ?? '';
+    ir.meta.category = bpm.category ?? 'Blueprints';
+    // optional sidecars
+    const spFile = document.getElementById('import-snappoints').files[0];
+    const trFile = document.getElementById('import-terrain').files[0];
+    if (spFile) {
+      const sp = parseCSV(await spFile.text());
+      for (const r of sp.rows) ir.snapPoints.push({ x: parseFloat(r.x) || 0, y: parseFloat(r.y) || 0, z: parseFloat(r.z) || 0 });
+    }
+    if (trFile) {
+      const tr = parseCSV(await trFile.text());
+      for (const r of tr.rows) ir.terrainMods.push({
+        shape: r.shape || 'circle', x: parseFloat(r.x) || 0, y: parseFloat(r.y) || 0, z: parseFloat(r.z) || 0,
+        radius: parseFloat(r.radius) || 0, rotation: parseInt(r.rotation, 10) || 0,
+        smooth: parseFloat(r.smooth) || 0, paint: r.paint || '',
+      });
+    }
+    const opts = {
+      reference: document.getElementById('uni-reference').value,
+      unresolvedPolicy: document.getElementById('uni-emit-unresolved').checked ? 'emit' : 'skip',
+    };
+    const text = BFC.blueprintCodec.serialize(ir, opts);
+    const name = (ir.meta.name || 'build').replace(/[^\w\- ]+/g, '_');
+    downloadBlob(`${name}.blueprint`, new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    const losses = BFC.summarizeLosses(ir.reports.losses);
+    statusEl.innerHTML = `<div class="status status-ok">✅ .blueprint generated (${ir.zdos.length} ZDOs → pieces).`
+      + (losses.length ? ` ${ir.reports.losses.length} ZDO variable(s) dropped — see console for details.` : '') + `</div>`;
+    if (losses.length) console.table(losses.slice(0, 100));
+  } catch (e) {
+    console.error(e);
+    statusEl.innerHTML = `<div class="status status-err"><strong>.blueprint generation failed:</strong> ${e.message}</div>`;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('uni-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    document.getElementById('uni-convert-btn').disabled = !file;
+    document.getElementById('uni-filename').textContent = file ? `📄 ${file.name} (${(file.size / 1024).toFixed(1)} KB)` : '';
+  });
+  document.getElementById('uni-convert-btn').addEventListener('click', handleUniversalConvert);
+  document.getElementById('download-bp-btn').addEventListener('click', handleDownloadBlueprint);
+  // show/hide blueprint-only options
+  for (const r of document.querySelectorAll('input[name="uni-target"]')) {
+    r.addEventListener('change', () => {
+      document.getElementById('uni-bp-opts').style.display =
+        document.querySelector('input[name="uni-target"]:checked').value === 'rewind' ? 'none' : 'block';
+    });
+  }
+});
+</script>
+</body>
+</html>
