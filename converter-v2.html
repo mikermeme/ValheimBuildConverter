@@ -1,0 +1,1740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Valheim Build File Converter</title>
+<style>
+:root {
+  --bg: #12121a; --surface: #1c1c28; --surface2: #26263a; --border: #34344e;
+  --text: #e4e4ee; --text2: #9a9ab0; --accent: #7c8cf8; --accent2: #4a5ae8;
+  --ok: #4ade80; --warn: #fbbf24; --err: #f87171; --info: #60a5fa;
+  --mono: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, 'Segoe UI', sans-serif; padding: 24px; }
+.wrap { max-width: 1180px; margin: 0 auto; }
+header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+h1 { font-size: 22px; margin: 0; }
+h1 .v { color: var(--text2); font-size: 13px; font-weight: normal; }
+h2 { font-size: 15px; margin: 0 0 12px; color: var(--text); }
+.chip { font-size: 12px; padding: 3px 10px; border-radius: 20px; background: var(--surface2); border: 1px solid var(--border); color: var(--text2); }
+.chip.ok { color: var(--ok); border-color: var(--ok); }
+.chip.err { color: var(--err); border-color: var(--err); }
+
+#drop {
+  border: 2px dashed var(--border); border-radius: 12px; background: var(--surface);
+  padding: 34px 20px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+}
+#drop.over { border-color: var(--accent); background: var(--surface2); }
+#drop .big { font-size: 16px; margin-bottom: 6px; }
+#drop .hint { color: var(--text2); font-size: 12.5px; }
+#drop input { display: none; }
+
+.grid { display: grid; grid-template-columns: minmax(340px, 5fr) minmax(380px, 6fr); gap: 16px; margin-top: 16px; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+
+.badge { display: inline-block; font-size: 11.5px; font-family: var(--mono); padding: 2px 8px; border-radius: 5px; background: var(--accent2); color: #fff; margin-right: 6px; }
+.badge.flavor { background: #8b5cf6; }
+.kv { color: var(--text2); font-size: 12.5px; margin: 8px 0; word-break: break-word; }
+.kv b { color: var(--text); font-weight: 600; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 8px; margin: 12px 0; }
+.stat { background: var(--surface2); border-radius: 8px; padding: 8px 10px; text-align: center; }
+.stat .n { font-size: 17px; font-weight: 700; font-family: var(--mono); }
+.stat .l { font-size: 11px; color: var(--text2); }
+.stat .n.dim { color: var(--text2); } .stat .n.good { color: var(--ok); } .stat .n.bad { color: var(--warn); }
+
+table.hist { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 4px; }
+table.hist td { padding: 2px 6px; border-bottom: 1px solid var(--border); }
+table.hist td.n { text-align: right; font-family: var(--mono); color: var(--text2); width: 60px; }
+table.hist .bar { height: 4px; background: var(--accent2); border-radius: 2px; }
+
+.targets { display: flex; flex-direction: column; gap: 8px; }
+.target { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; cursor: pointer; background: var(--surface2); transition: border-color .12s; }
+.target.sel { border-color: var(--accent); }
+.target .t { font-weight: 600; font-size: 13.5px; }
+.target .d { color: var(--text2); font-size: 12px; margin-top: 2px; }
+.target .fid { font-size: 11.5px; margin-top: 4px; }
+.fid.full { color: var(--ok); } .fid.partial { color: var(--warn); } .fid.geo { color: var(--text2); }
+
+#opts { margin: 12px 0; font-size: 13px; display: flex; flex-direction: column; gap: 8px; }
+#opts label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+select, input[type=text] { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; }
+input[type=text] { flex: 1; min-width: 120px; }
+.btn { border: none; border-radius: 8px; padding: 9px 18px; font: 600 13.5px/1 inherit; cursor: pointer; }
+.btn-primary { background: var(--accent2); color: #fff; }
+.btn-primary:hover { background: var(--accent); }
+.btn-primary:disabled { opacity: .45; cursor: default; }
+.btn-sm { padding: 5px 12px; font-size: 12px; background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+
+.status { border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 13px; }
+.status.ok { background: #14301e; border: 1px solid var(--ok); }
+.status.err { background: #351a1a; border: 1px solid var(--err); }
+.status.warn { background: #33290f; border: 1px solid var(--warn); }
+.status.info { background: #14243a; border: 1px solid var(--info); }
+
+details { margin-top: 10px; }
+details summary { cursor: pointer; font-size: 13px; color: var(--text2); }
+.list { font-family: var(--mono); font-size: 11.5px; max-height: 260px; overflow-y: auto; background: var(--surface2); border-radius: 8px; padding: 8px 10px; margin-top: 6px; white-space: pre-wrap; }
+
+footer { margin-top: 22px; color: var(--text2); font-size: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+footer code { font-family: var(--mono); background: var(--surface2); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Valheim Build File Converter <span class="v">v2.0</span></h1>
+  <span class="chip" id="hash-chip">Loading hash table…</span>
+</header>
+
+<div id="drop">
+  <div class="big">Drop build files here <span style="color:var(--text2)">or click to browse</span></div>
+  <div class="hint">.rewind &nbsp;·&nbsp; .blueprint (PlanBuild or Infinity Hammer) &nbsp;·&nbsp; .vbuild &nbsp;·&nbsp; CSV bundle (drop meta + zdos + items together)</div>
+  <input type="file" id="file-input" multiple>
+</div>
+
+<div class="grid" id="main" style="display:none">
+  <div class="card" id="inspector"></div>
+  <div class="card">
+    <h2>Convert to</h2>
+    <div class="targets" id="targets"></div>
+    <div id="opts"></div>
+    <button class="btn btn-primary" id="convert-btn">Convert &amp; Download</button>
+    <div id="conv-status"></div>
+    <div id="report"></div>
+  </div>
+</div>
+
+<footer>
+  <b>Notes.</b> Infinity Hammer output is written pre-centered with <code>#Coordinates</code> set to the absolute world center, so
+  <code>hammer_restore &lt;name&gt;</code> rebuilds at the exact original position — with full per-piece ZDO data (health, container items,
+  tames, sign text, growth timers…). Place this file next to <code>master_hash_lookup.json</code> (and optionally
+  <code>FieldsFiltered.csv</code>) for prefab/variable name resolution. CSV bundles keep the same columns as the original
+  Rewind2csv tool, so existing spreadsheets keep working; longs are now precision-safe.
+</footer>
+</div>
+<script>
+(function () {
+// ============================================================================
+// Build File Converter — codec + projection layer (DOM-free, Node-testable)
+// Formats: .blueprint (PlanBuild), .rewind (Rewind mod), .vbuild (legacy)
+// Canonical IR: BuildIR (see BUILD_CONVERTER_PLAN.md §2)
+// ============================================================================
+'use strict';
+
+// ---------------------------------------------------------------------------
+// Hashing (Valheim GetStableHashCode — djb2 variant on UTF-16 code units)
+// ---------------------------------------------------------------------------
+function getStableHashCode(str) {
+  let hash1 = 5381, hash2 = 5381;
+  for (let i = 0; i < str.length && str.charCodeAt(i) !== 0; i += 2) {
+    hash1 = (Math.imul(hash1, 33) ^ str.charCodeAt(i)) | 0;
+    if (i === str.length - 1 || str.charCodeAt(i + 1) === 0) break;
+    hash2 = (Math.imul(hash2, 33) ^ str.charCodeAt(i + 1)) | 0;
+  }
+  return (hash1 + Math.imul(hash2, 1566083941)) | 0;
+}
+
+const H = {
+  scale:       getStableHashCode('scale'),        // vec3
+  scaleScalar: getStableHashCode('scaleScalar'),  // float
+  items:       getStableHashCode('items'),
+  item:        getStableHashCode('item'),
+  variant:     getStableHashCode('variant'),
+  quality:     getStableHashCode('quality'),
+  type:        getStableHashCode('type'),
+  pose:        getStableHashCode('pose'),
+  state:       getStableHashCode('state'),
+  enabled:     getStableHashCode('enabled'),
+  text:        getStableHashCode('text'),
+};
+
+// ---------------------------------------------------------------------------
+// Float formatting: shortest decimal string that reparses to the same float32
+// (value-exact contract, plan §4.3)
+// ---------------------------------------------------------------------------
+function shortestFloat32(f) {
+  f = Math.fround(f);
+  if (Number.isInteger(f) && Math.abs(f) < 1e15) return f.toString();
+  for (let p = 1; p <= 9; p++) {
+    const s = f.toPrecision(p);
+    if (Math.fround(parseFloat(s)) === f) {
+      // strip exponent-free trailing zeros ("1.50" -> "1.5")
+      return parseFloat(s).toString();
+    }
+  }
+  return f.toString();
+}
+
+// PlanBuild-compatible float parse with legacy decimal-comma repair for
+// SnapPoint/TerrainMod fields ("-,5" / ",5")
+function invariantFloat(s) {
+  if (!s) return 0;
+  if (s.startsWith('-,')) s = '-0,' + s.slice(2);
+  else if (s.startsWith(',')) s = '0' + s;
+  return Math.fround(parseFloat(s.replace(',', '.')));
+}
+
+// ---------------------------------------------------------------------------
+// BuildIR constructors
+// ---------------------------------------------------------------------------
+function emptyIR(sourceFormat) {
+  return {
+    meta: {
+      sourceFormat,
+      rewindVersion: 29,
+      origin: { x: 0, y: 0, z: 0 },
+      name: null, creator: null, description: null, category: null,
+    },
+    zdos: [],
+    snapPoints: [],
+    terrainMods: [],
+    reports: { warnings: [], losses: [] },
+  };
+}
+
+function emptyZdo() {
+  return {
+    uidUser: 0n, uidId: 0,
+    ownerRev: 0, dataRev: 0, persistent: true, userKey: 0n, timeCreated: 0n,
+    type: 0, distant: false,
+    prefabHash: 0, prefabName: null,
+    sectorX: 0, sectorY: 0,
+    pos: { x: 0, y: 0, z: 0 },
+    rot: { x: 0, y: 0, z: 0, w: 1 },
+    floats: [], vec3s: [], quats: [], ints: [], longs: [], strings: [], bytes: [],
+  };
+}
+
+// ZoneSystem.GetZone
+function sectorOf(x, z) {
+  return [Math.floor((x + 32) / 64), Math.floor((z + 32) / 64)];
+}
+
+function normalizeQuat(q) {
+  const m = Math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+  if (m === 0) return { x: 0, y: 0, z: 0, w: 1 };
+  // Already unit-length within float32 tolerance: pass through untouched so
+  // round trips are value-exact (renormalizing shifts values by 1 ulp).
+  if (Math.abs(m - 1) < 1e-5) return { x: Math.fround(q.x), y: Math.fround(q.y), z: Math.fround(q.z), w: Math.fround(q.w) };
+  return { x: Math.fround(q.x / m), y: Math.fround(q.y / m), z: Math.fround(q.z / m), w: Math.fround(q.w / m) };
+}
+
+// ---------------------------------------------------------------------------
+// Base64 helpers (DOM-free)
+// ---------------------------------------------------------------------------
+const B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+function b64decode(s) {
+  if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(s, 'base64'));
+  const bin = atob(s); const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// Detect PlanBuild container payload: base64 whose decoded first int32 == 106
+function isContainerItemsPayload(s) {
+  if (!s || s.length < 12 || s.length % 4 !== 0 || !B64_RE.test(s)) return false;
+  try {
+    const bytes = b64decode(s);
+    if (bytes.length < 8) return false;
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return dv.getInt32(0, true) === 106;
+  } catch { return false; }
+}
+
+// ---------------------------------------------------------------------------
+// SimpleJson string encode/decode (PlanBuild uses SimpleJson for Description
+// and additionalInfo — plain JSON strings)
+// ---------------------------------------------------------------------------
+function jsonDecodeMaybe(s) {
+  if (s == null) return null;
+  if (s.startsWith('"')) { try { return JSON.parse(s); } catch { return s; } }
+  return s;
+}
+function jsonEncodeString(s) { return JSON.stringify(s == null ? '' : s); }
+
+// ============================================================================
+// BLUEPRINT CODEC (plan §3.2)
+// ============================================================================
+const blueprintCodec = {
+  // text -> BuildIR (zdos synthesized via projection below)
+  parse(text, opts = {}) {
+    const ir = emptyIR('blueprint');
+    const pieces = [];  // raw PieceEntry-level records kept on ir._pieces
+    let state = 'pieces';
+    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+    for (let rawLine of lines) {
+      let line = rawLine;
+      if (!line || !line.trim()) continue;
+      if (line.startsWith('#Name:')) { ir.meta.name = line.slice(6); continue; }
+      if (line.startsWith('#Creator:')) { ir.meta.creator = line.slice(9); continue; }
+      if (line.startsWith('#Description:')) { ir.meta.description = jsonDecodeMaybe(line.slice(13)); continue; }
+      if (line.startsWith('#Category:')) { ir.meta.category = line.slice(10) || 'Blueprints'; continue; }
+      if (line === '#SnapPoints') { state = 'snap'; continue; }
+      if (line === '#Terrain') { state = 'terrain'; continue; }
+      if (line === '#Pieces') { state = 'pieces'; continue; }
+      if (line.startsWith('#')) continue; // comment
+      // Legacy comma-decimal repair — deliberate deviation from PlanBuild:
+      // only when the line has ',' and NO '.' (see plan §3.2)
+      if (line.indexOf(',') > -1 && line.indexOf('.') === -1) {
+        ir.reports.warnings.push(`Legacy comma-decimal line repaired: ${line.slice(0, 60)}`);
+        line = line.replace(/,/g, '.');
+      }
+      if (state === 'snap') {
+        const p = line.split(';');
+        ir.snapPoints.push({ x: invariantFloat(p[0]), y: invariantFloat(p[1]), z: invariantFloat(p[2]) });
+        continue;
+      }
+      if (state === 'terrain') {
+        const p = line.split(';');
+        ir.terrainMods.push({
+          shape: p[0], x: invariantFloat(p[1]), y: invariantFloat(p[2]), z: invariantFloat(p[3]),
+          radius: invariantFloat(p[4]), rotation: parseInt(p[5], 10) | 0,
+          smooth: invariantFloat(p[6]), paint: p[7] ?? '',
+        });
+        continue;
+      }
+      // Pieces
+      const p = line.split(';');
+      if (p.length < 10) { ir.reports.warnings.push(`Malformed piece line skipped: ${line.slice(0, 60)}`); continue; }
+      let addInfo = p[9];
+      if (!addInfo || addInfo === '""') addInfo = null;
+      else addInfo = jsonDecodeMaybe(addInfo);
+      const piece = {
+        name: p[0].split('(')[0], category: p[1],
+        pos: { x: invariantFloat(p[2]), y: invariantFloat(p[3]), z: invariantFloat(p[4]) },
+        rot: normalizeQuat({ x: invariantFloat(p[5]), y: invariantFloat(p[6]), z: invariantFloat(p[7]), w: invariantFloat(p[8]) }),
+        additionalInfo: addInfo,
+        scale: p.length > 10
+          ? { x: invariantFloat(p[10]), y: invariantFloat(p[11]), z: invariantFloat(p[12]) }
+          : { x: 1, y: 1, z: 1 },
+      };
+      if (piece.name === 'piece_blueprint') ir.reports.warnings.push('Blueprint contains an erroneously captured piece_blueprint entry (kept; PlanBuild skips it at placement)');
+      pieces.push(piece);
+    }
+    if (!ir.meta.name) ir.meta.name = opts.id || null;
+    if (!ir.meta.category) ir.meta.category = 'Blueprints';
+    ir.zdos = pieces.map((pc, i) => pieceToZdo(pc, i, ir.reports));
+    ir._pieceOrderPreserved = true;
+    return ir;
+  },
+
+  // BuildIR -> text
+  serialize(ir, opts = {}) {
+    const out = [];
+    out.push('#Name:' + (ir.meta.name ?? ''));
+    out.push('#Creator:' + (ir.meta.creator ?? ''));
+    out.push('#Description:' + jsonEncodeString(ir.meta.description ?? ''));
+    out.push('#Category:' + (ir.meta.category || 'Blueprints'));
+    if (ir.snapPoints.length) {
+      out.push('#SnapPoints');
+      for (const s of ir.snapPoints) out.push([s.x, s.y, s.z].map(shortestFloat32).join(';'));
+    }
+    if (ir.terrainMods.length) {
+      out.push('#Terrain');
+      for (const t of ir.terrainMods) {
+        out.push([t.shape.toLowerCase(), shortestFloat32(t.x), shortestFloat32(t.y), shortestFloat32(t.z),
+          shortestFloat32(t.radius), String(t.rotation | 0), shortestFloat32(t.smooth), t.paint ?? ''].join(';'));
+      }
+    }
+    out.push('#Pieces');
+    let zdos = ir.zdos;
+    // Reference point (plan §4.2): min-corner default, or file origin
+    const ref = referencePoint(ir, opts.reference || (ir._pieceOrderPreserved ? 'zero' : 'mincorner'));
+    let rows = zdos.map(z => zdoToPiece(z, ref, ir.reports, opts));
+    rows = rows.filter(r => r !== null);
+    if (!ir._pieceOrderPreserved) {
+      rows.sort((a, b) => a.pos.y - b.pos.y || a.pos.x - b.pos.x || a.pos.z - b.pos.z); // PlanBuild capture ordering
+    }
+    for (const r of rows) {
+      let info = r.additionalInfo;
+      if (info != null && info.indexOf(';') > -1) {
+        ir.reports.warnings.push(`Semicolons stripped from additionalInfo of ${r.name} (blueprint format limitation)`);
+        info = info.split(';').join('');
+      }
+      out.push([
+        r.name, r.category,
+        shortestFloat32(r.pos.x), shortestFloat32(r.pos.y), shortestFloat32(r.pos.z),
+        shortestFloat32(r.rot.x), shortestFloat32(r.rot.y), shortestFloat32(r.rot.z), shortestFloat32(r.rot.w),
+        jsonEncodeString(info ?? ''),
+        shortestFloat32(r.scale.x), shortestFloat32(r.scale.y), shortestFloat32(r.scale.z),
+      ].join(';'));
+    }
+    return out.join('\n') + '\n';
+  },
+};
+
+function referencePoint(ir, mode) {
+  if (mode === 'origin') return { ...ir.meta.origin };
+  if (mode === 'zero') return { x: 0, y: 0, z: 0 };
+  // min-corner (PlanBuild capture convention)
+  let mx = Infinity, my = Infinity, mz = Infinity;
+  for (const z of ir.zdos) { mx = Math.min(mx, z.pos.x); my = Math.min(my, z.pos.y); mz = Math.min(mz, z.pos.z); }
+  if (!isFinite(mx)) return { x: 0, y: 0, z: 0 };
+  return { x: mx, y: my, z: mz };
+}
+
+// ============================================================================
+// VBUILD CODEC (parse only, plan §3.3) — "name rotX rotY rotZ rotW posX posY posZ"
+// ============================================================================
+const vbuildCodec = {
+  parse(text, opts = {}) {
+    const ir = emptyIR('vbuild');
+    ir.meta.name = opts.id || null;
+    ir.meta.category = 'Blueprints';
+    const pieces = [];
+    for (let line of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      if (line.indexOf(',') > -1 && line.indexOf('.') === -1) line = line.replace(/,/g, '.');
+      const p = line.trim().split(/\s+/);
+      if (p.length < 8) { ir.reports.warnings.push(`Malformed vbuild line skipped: ${line.slice(0, 60)}`); continue; }
+      pieces.push({
+        name: p[0].split('(')[0], category: 'Building',
+        rot: normalizeQuat({ x: invariantFloat(p[1]), y: invariantFloat(p[2]), z: invariantFloat(p[3]), w: invariantFloat(p[4]) }),
+        pos: { x: invariantFloat(p[5]), y: invariantFloat(p[6]), z: invariantFloat(p[7]) },
+        additionalInfo: null, scale: { x: 1, y: 1, z: 1 },
+      });
+    }
+    ir.zdos = pieces.map((pc, i) => pieceToZdo(pc, i, ir.reports));
+    ir._pieceOrderPreserved = true;
+    return ir;
+  },
+};
+
+// ============================================================================
+// PROJECTIONS: piece <-> ZDO (plan §4)
+// ============================================================================
+
+// additionalInfo string -> typed ZDO vars, by value-shape detection (plan §4.1).
+// Returns {kind, apply(zdo)}.
+function detectAdditionalInfo(info) {
+  if (info == null || info === '') return { kind: 'none', apply() {} };
+  if (isContainerItemsPayload(info)) {
+    return { kind: 'container', apply(z) { z.strings.push({ hash: H.items, name: 'items', value: info }); } };
+  }
+  if (info === 'true' || info === 'false') {
+    return { kind: 'ward', apply(z) { z.ints.push({ hash: H.enabled, name: 'enabled', value: info === 'true' ? 1 : 0 }); } };
+  }
+  if (info.indexOf(':') > -1) {
+    const f = info.split(':');
+    if (/^-?\d+$/.test(f[0])) {
+      // ArmorStand: pose:count:item:variant:...
+      return { kind: 'armorstand', apply(z) {
+        z.ints.push({ hash: H.pose, name: 'pose', value: parseInt(f[0], 10) | 0 });
+        const cnt = parseInt(f[1], 10) | 0;
+        for (let j = 0; j < cnt; j++) {
+          const item = f[j * 2 + 2] ?? '', variant = parseInt(f[j * 2 + 3] ?? '0', 10) | 0;
+          z.strings.push({ hash: getStableHashCode(`${j}_item`), name: `${j}_item`, value: item });
+          z.ints.push({ hash: getStableHashCode(`${j}_variant`), name: `${j}_variant`, value: variant });
+        }
+      } };
+    }
+    // ItemStand: item:variant[:quality[:type]]
+    return { kind: 'itemstand', apply(z) {
+      z.strings.push({ hash: H.item, name: 'item', value: f[0] });
+      z.ints.push({ hash: H.variant, name: 'variant', value: parseInt(f[1] ?? '0', 10) | 0 });
+      z.ints.push({ hash: H.quality, name: 'quality', value: parseInt(f[2] ?? '1', 10) | 0 });
+      z.ints.push({ hash: H.type, name: 'type', value: parseInt(f[3] ?? '0', 10) | 0 });
+    } };
+  }
+  if (/^-?\d+$/.test(info)) {
+    return { kind: 'door', apply(z) { z.ints.push({ hash: H.state, name: 'state', value: parseInt(info, 10) | 0 }); } };
+  }
+  return { kind: 'sign', apply(z) { z.strings.push({ hash: H.text, name: 'text', value: info }); } };
+}
+
+// piece record -> ZdoRecord (blueprint/vbuild -> rewind direction)
+function pieceToZdo(pc, index, reports, overrides = {}) {
+  const z = emptyZdo();
+  z.uidUser = 0n; z.uidId = index + 1;
+  z.prefabName = pc.name;
+  z.prefabHash = getStableHashCode(pc.name);
+  z.pos = { x: Math.fround(pc.pos.x), y: Math.fround(pc.pos.y), z: Math.fround(pc.pos.z) };
+  z.rot = pc.rot;
+  [z.sectorX, z.sectorY] = sectorOf(z.pos.x, z.pos.z);
+  // scale (mirrors ZNetView.SetLocalScale)
+  const s = pc.scale;
+  if (!(s.x === 1 && s.y === 1 && s.z === 1)) {
+    if (Math.abs(s.x - s.y) < 1e-6 && Math.abs(s.x - s.z) < 1e-6) {
+      z.floats.push({ hash: H.scaleScalar, name: 'scaleScalar', value: Math.fround(s.x) });
+    } else {
+      z.vec3s.push({ hash: H.scale, name: 'scale', value: { x: Math.fround(s.x), y: Math.fround(s.y), z: Math.fround(s.z) } });
+    }
+  }
+  const det = overrides[index] ? { kind: overrides[index].kind, apply: overrides[index].apply } : detectAdditionalInfo(pc.additionalInfo);
+  det.apply(z);
+  z._addInfoKind = det.kind;
+  z._category = pc.category;
+  return z;
+}
+
+// ZdoRecord -> piece record (rewind -> blueprint direction). Returns null if skipped.
+function zdoToPiece(z, ref, reports, opts = {}) {
+  const bucketFind = (arr, hash) => arr.find(e => e.hash === hash);
+  let name = z.prefabName;
+  if (name == null || name.startsWith('#0x')) {
+    if (opts.unresolvedPolicy === 'emit') {
+      name = name ?? ('#0x' + (z.prefabHash >>> 0).toString(16).toUpperCase());
+      reports.warnings.push(`Unresolved prefab hash ${z.prefabHash} emitted as ${name} (will not place in-game)`);
+    } else {
+      reports.losses.push({ kind: 'zdo-skipped-unresolved', prefabHash: z.prefabHash, count: 1 });
+      return null;
+    }
+  }
+  // scale
+  let scale = { x: 1, y: 1, z: 1 };
+  const v = bucketFind(z.vec3s, H.scale);
+  const f = bucketFind(z.floats, H.scaleScalar);
+  if (v) scale = { ...v.value };
+  else if (f) scale = { x: f.value, y: f.value, z: f.value };
+  // additionalInfo synthesis, priority per plan §4.2
+  const consumed = new Set();
+  let info = null, kind = 'none';
+  const sItems = bucketFind(z.strings, H.items);
+  const sText = bucketFind(z.strings, H.text);
+  const sItem = bucketFind(z.strings, H.item);
+  const iPose = bucketFind(z.ints, H.pose);
+  const s0item = bucketFind(z.strings, getStableHashCode('0_item'));
+  const iState = bucketFind(z.ints, H.state);
+  const iEnabled = bucketFind(z.ints, H.enabled);
+  if (sItems) { info = sItems.value; kind = 'container'; consumed.add('strings:items'); }
+  else if (sText) { info = sText.value; kind = 'sign'; consumed.add('strings:text'); }
+  else if (sItem) {
+    kind = 'itemstand';
+    const iv = bucketFind(z.ints, H.variant), iq = bucketFind(z.ints, H.quality), it = bucketFind(z.ints, H.type);
+    info = `${sItem.value}:${iv ? iv.value : 0}:${iq ? iq.value : 1}:${it ? it.value : 0}`;
+    consumed.add('strings:item');
+    if (iv) consumed.add('ints:variant'); if (iq) consumed.add('ints:quality'); if (it) consumed.add('ints:type');
+  } else if (iPose && s0item !== undefined) {
+    kind = 'armorstand';
+    const slots = [];
+    for (let j = 0; ; j++) {
+      const si = bucketFind(z.strings, getStableHashCode(`${j}_item`));
+      if (!si) break;
+      const sv = bucketFind(z.ints, getStableHashCode(`${j}_variant`));
+      slots.push(`${si.value}:${sv ? sv.value : 0}`);
+      consumed.add(`strings:${j}_item`); if (sv) consumed.add(`ints:${j}_variant`);
+    }
+    info = `${iPose.value}:${slots.length}:${slots.join(':')}`;
+    consumed.add('ints:pose');
+  } else if (iState) { info = String(iState.value); kind = 'door'; consumed.add('ints:state'); }
+  else if (iEnabled) { info = iEnabled.value ? 'true' : 'false'; kind = 'ward'; consumed.add('ints:enabled'); }
+  // loss accounting: every remaining var is dropped
+  for (const [bname, arr] of [['floats', z.floats], ['vec3s', z.vec3s], ['quats', z.quats], ['ints', z.ints], ['longs', z.longs], ['strings', z.strings], ['bytes', z.bytes]]) {
+    for (const e of arr) {
+      const key = `${bname}:${e.name ?? e.hash}`;
+      if (consumed.has(key)) continue;
+      if (bname === 'vec3s' && e.hash === H.scale) continue;
+      if (bname === 'floats' && e.hash === H.scaleScalar) continue;
+      reports.losses.push({ kind: 'var-dropped', prefab: name, bucket: bname, varName: e.name ?? ('#0x' + (e.hash >>> 0).toString(16).toUpperCase()), count: 1 });
+    }
+  }
+  return {
+    name, category: z._category ?? 'Building',
+    pos: { x: Math.fround(z.pos.x - ref.x), y: Math.fround(z.pos.y - ref.y), z: Math.fround(z.pos.z - ref.z) },
+    rot: z.rot, additionalInfo: info, scale, _addInfoKind: kind,
+  };
+}
+
+// Aggregate loss list -> {key, count} summary
+function summarizeLosses(losses) {
+  const map = new Map();
+  for (const l of losses) {
+    const key = l.kind === 'var-dropped' ? `${l.prefab} · ${l.bucket}.${l.varName}` : `${l.kind} · hash ${l.prefabHash}`;
+    map.set(key, (map.get(key) || 0) + l.count);
+  }
+  return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, count }));
+}
+
+// ============================================================================
+// REWIND CODEC — binary (plan §3.1). Standalone reader/writer mirroring the
+// proven implementation in rewind-converter.html (UTF-8 char counts, LEB128
+// string lengths, BigInt int64s).
+// ============================================================================
+class BinReader {
+  constructor(buf) { this.dv = new DataView(buf); this.off = 0; this.len = buf.byteLength; }
+  i8()  { const v = this.dv.getInt8(this.off);           this.off += 1; return v; }
+  u8()  { const v = this.dv.getUint8(this.off);          this.off += 1; return v; }
+  i32() { const v = this.dv.getInt32(this.off, true);    this.off += 4; return v; }
+  u32() { const v = this.dv.getUint32(this.off, true);   this.off += 4; return v; }
+  f32() { const v = this.dv.getFloat32(this.off, true);  this.off += 4; return v; }
+  i64() { const v = this.dv.getBigInt64(this.off, true); this.off += 8; return v; }
+  bool(){ return this.u8() !== 0; }
+  count() { // UTF-8 encoded char
+    const a = this.u8();
+    if (a < 0x80) return a;
+    if ((a & 0xE0) === 0xC0) { const b = this.u8(); return ((a & 0x1F) << 6) | (b & 0x3F); }
+    if ((a & 0xF0) === 0xE0) { const b = this.u8(), c = this.u8(); return ((a & 0x0F) << 12) | ((b & 0x3F) << 6) | (c & 0x3F); }
+    return a;
+  }
+  str() { // LEB128 length + UTF-8
+    let len = 0, shift = 0;
+    for (;;) { const b = this.u8(); len |= (b & 0x7F) << shift; if (!(b & 0x80)) break; shift += 7; }
+    const bytes = new Uint8Array(this.dv.buffer, this.dv.byteOffset + this.off, len);
+    this.off += len;
+    return new TextDecoder().decode(bytes);
+  }
+  bytesArr() { const n = this.i32(); const b = new Uint8Array(this.dv.buffer, this.dv.byteOffset + this.off, n).slice(); this.off += n; return b; }
+}
+
+class BinWriter {
+  constructor() { this.chunks = []; this.size = 0; }
+  _push(arr) { this.chunks.push(arr); this.size += arr.length; }
+  u8(v)  { this._push(new Uint8Array([v & 0xFF])); }
+  i32(v) { const b = new Uint8Array(4); new DataView(b.buffer).setInt32(0, v, true); this._push(b); }
+  u32(v) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v >>> 0, true); this._push(b); }
+  f32(v) { const b = new Uint8Array(4); new DataView(b.buffer).setFloat32(0, v, true); this._push(b); }
+  i64(v) { const b = new Uint8Array(8); new DataView(b.buffer).setBigInt64(0, BigInt(v), true); this._push(b); }
+  bool(v){ this.u8(v ? 1 : 0); }
+  count(n) { // UTF-8 encoded char
+    if (n < 0x80) this.u8(n);
+    else if (n < 0x800) { this.u8(0xC0 | (n >> 6)); this.u8(0x80 | (n & 0x3F)); }
+    else { this.u8(0xE0 | (n >> 12)); this.u8(0x80 | ((n >> 6) & 0x3F)); this.u8(0x80 | (n & 0x3F)); }
+  }
+  str(s) {
+    const bytes = new TextEncoder().encode(s);
+    let len = bytes.length;
+    for (;;) { let b = len & 0x7F; len >>>= 7; if (len) this.u8(b | 0x80); else { this.u8(b); break; } }
+    this._push(bytes);
+  }
+  bytesArr(b) { this.i32(b.length); this._push(b); }
+  toBuffer() {
+    const out = new Uint8Array(this.size); let o = 0;
+    for (const c of this.chunks) { out.set(c, o); o += c.length; }
+    return out.buffer;
+  }
+}
+
+const rewindCodec = {
+  // ArrayBuffer -> BuildIR. hashResolver: (hash) => name|null (optional)
+  parse(buf, opts = {}) {
+    const resolve = opts.hashResolver || (() => null);
+    const ir = emptyIR('rewind');
+    const r = new BinReader(buf);
+    ir.meta.rewindVersion = r.i32();
+    const count = r.i32();
+    ir.meta.origin = { x: r.f32(), y: r.f32(), z: r.f32() };
+    for (let i = 0; i < count; i++) {
+      const z = emptyZdo();
+      z.uidUser = r.i64(); z.uidId = r.u32();
+      const plen = r.i32();
+      const pkgEnd = r.off + plen;
+      z.ownerRev = r.u32(); z.dataRev = r.u32(); z.persistent = r.bool();
+      z.userKey = r.i64(); z.timeCreated = r.i64();
+      const zero = r.i32();
+      if (zero !== 0) ir.reports.warnings.push(`ZDO[${i}]: nonzero reserved field (${zero})`);
+      z.type = r.i8(); z.distant = r.bool(); z.prefabHash = r.i32();
+      z.sectorX = r.i32(); z.sectorY = r.i32();
+      z.pos = { x: r.f32(), y: r.f32(), z: r.f32() };
+      z.rot = { x: r.f32(), y: r.f32(), z: r.f32(), w: r.f32() };
+      let n;
+      n = r.count(); for (let k = 0; k < n; k++) z.floats.push(tag({ hash: r.i32(), value: r.f32() }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.vec3s.push(tag({ hash: r.i32(), value: { x: r.f32(), y: r.f32(), z: r.f32() } }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.quats.push(tag({ hash: r.i32(), value: { x: r.f32(), y: r.f32(), z: r.f32(), w: r.f32() } }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.ints.push(tag({ hash: r.i32(), value: r.i32() }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.longs.push(tag({ hash: r.i32(), value: r.i64() }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.strings.push(tag({ hash: r.i32(), value: r.str() }, resolve));
+      n = r.count(); for (let k = 0; k < n; k++) z.bytes.push(tag({ hash: r.i32(), value: r.bytesArr() }, resolve));
+      if (r.off !== pkgEnd) {
+        ir.reports.warnings.push(`ZDO[${i}]: package length mismatch (read ${r.off - (pkgEnd - plen)} of ${plen}) — realigned`);
+        r.off = pkgEnd;
+      }
+      z.prefabName = resolve(z.prefabHash);
+      ir.zdos.push(z);
+    }
+    if (r.off !== r.len) ir.reports.warnings.push(`Trailing bytes: ${r.len - r.off}`);
+    return ir;
+  },
+
+  // BuildIR -> ArrayBuffer
+  serialize(ir) {
+    const w = new BinWriter();
+    w.i32(ir.meta.rewindVersion || 29);
+    w.i32(ir.zdos.length);
+    w.f32(ir.meta.origin.x); w.f32(ir.meta.origin.y); w.f32(ir.meta.origin.z);
+    for (const z of ir.zdos) {
+      w.i64(z.uidUser); w.u32(z.uidId);
+      const pw = new BinWriter();
+      pw.u32(z.ownerRev); pw.u32(z.dataRev); pw.bool(z.persistent);
+      pw.i64(z.userKey); pw.i64(z.timeCreated); pw.i32(0);
+      pw.u8(z.type & 0xFF); pw.bool(z.distant); pw.i32(z.prefabHash);
+      pw.i32(z.sectorX); pw.i32(z.sectorY);
+      pw.f32(z.pos.x); pw.f32(z.pos.y); pw.f32(z.pos.z);
+      pw.f32(z.rot.x); pw.f32(z.rot.y); pw.f32(z.rot.z); pw.f32(z.rot.w);
+      pw.count(z.floats.length);  for (const e of z.floats)  { pw.i32(e.hash); pw.f32(e.value); }
+      pw.count(z.vec3s.length);   for (const e of z.vec3s)   { pw.i32(e.hash); pw.f32(e.value.x); pw.f32(e.value.y); pw.f32(e.value.z); }
+      pw.count(z.quats.length);   for (const e of z.quats)   { pw.i32(e.hash); pw.f32(e.value.x); pw.f32(e.value.y); pw.f32(e.value.z); pw.f32(e.value.w); }
+      pw.count(z.ints.length);    for (const e of z.ints)    { pw.i32(e.hash); pw.i32(e.value); }
+      pw.count(z.longs.length);   for (const e of z.longs)   { pw.i32(e.hash); pw.i64(e.value); }
+      pw.count(z.strings.length); for (const e of z.strings) { pw.i32(e.hash); pw.str(e.value); }
+      pw.count(z.bytes.length);   for (const e of z.bytes)   { pw.i32(e.hash); pw.bytesArr(e.value); }
+      const pkg = new Uint8Array(pw.toBuffer());
+      w.i32(pkg.length); w._push(pkg);
+    }
+    return w.toBuffer();
+  },
+};
+
+function tag(entry, resolve) { const n = resolve(entry.hash); if (n) entry.name = n; return entry; }
+
+// ---------------------------------------------------------------------------
+// Format sniffing (plan §5)
+// ---------------------------------------------------------------------------
+function sniffFormat(bytes, filename = '') {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  if (ext === 'blueprint') return 'blueprint';
+  if (ext === 'vbuild') return 'vbuild';
+  if (ext === 'csv') return 'csv';
+  if (bytes.length >= 8) {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const v = dv.getInt32(0, true), c = dv.getInt32(4, true);
+    if (v >= 2 && v <= 40 && c >= 0 && c < 50_000_000) return 'rewind';
+  }
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.slice(0, 4096)); } catch { return 'rewind'; }
+  if (/^#(Name:|Creator:|Pieces|SnapPoints|Terrain|Category:|Description:)/m.test(text)) return 'blueprint';
+  const firstLine = text.split(/\r?\n/).find(l => l.trim());
+  if (firstLine && firstLine.trim().split(/\s+/).length >= 8) return 'vbuild';
+  return 'unknown';
+}
+
+// ---------------------------------------------------------------------------
+// Exports (Node) / globals (browser)
+// ---------------------------------------------------------------------------
+const BFC = {
+  getStableHashCode, H, shortestFloat32, invariantFloat,
+  emptyIR, emptyZdo, sectorOf, normalizeQuat,
+  isContainerItemsPayload, detectAdditionalInfo, pieceToZdo, zdoToPiece, summarizeLosses,
+  blueprintCodec, vbuildCodec, rewindCodec, BinReader, BinWriter, sniffFormat, referencePoint,
+};
+if (typeof module !== 'undefined' && module.exports) module.exports = BFC;
+if (typeof window !== 'undefined') window.BFC = BFC;
+
+'use strict';
+// ============================================================================
+// BFC extensions: Infinity Hammer DataEntry blobs, IH .blueprint flavor,
+// container items codec, CSV bundle projection.
+// Appended to codecs.js by the build; in node, require after codecs.js with
+// the same scope (build concatenates; tests use requireExt()).
+// ============================================================================
+/* global getStableHashCode, H, shortestFloat32, invariantFloat, emptyIR, emptyZdo,
+   sectorOf, normalizeQuat, b64decode, blueprintCodec, rewindCodec, vbuildCodec,
+   pieceToZdo, zdoToPiece, BinReader, BinWriter, BFC */
+
+function b64encode(bytes) {
+  if (typeof Buffer !== 'undefined') return Buffer.from(bytes).toString('base64');
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+}
+
+// ----------------------------------------------------------------------------
+// Infinity Hammer DataEntry blob (Jere Kuusela's Data library, ZPackage-based).
+// Layout verified empirically against 6431 blobs in EichenwaldeTest.blueprint
+// (exact-length parse on every blob):
+//   int32 flags
+//     1=floats 2=vec3s 4=quats 8=ints 16=strings 64=longs 128=byteArrays
+//     512=persistent 1024=distant 2048=priority   (256/32: never observed)
+//   sections in WRITE ORDER (differs from flag bit order!):
+//     floats, vec3s, quats, ints, LONGS, STRINGS, byteArrays,
+//     then persistent(byte), distant(byte), priority(byte)
+//   counts: single byte; entries: hash i32 LE + value
+//   strings: LEB128 len + UTF-8; byteArrays: i32 len + raw
+// persistent/distant flags are emitted only when true; priority always.
+// ----------------------------------------------------------------------------
+const DE = { FLOATS: 1, VEC3S: 2, QUATS: 4, INTS: 8, STRINGS: 16, UNKNOWN32: 32, LONGS: 64, BYTES: 128, UNKNOWN256: 256, PERSISTENT: 512, DISTANT: 1024, PRIORITY: 2048 };
+
+const dataEntryCodec = {
+  // base64 string | Uint8Array -> entry object (bucket entries shaped like ZDO buckets)
+  parse(input, opts = {}) {
+    const bytes = typeof input === 'string' ? b64decode(input) : input;
+    const r = new BinReader(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    const resolve = opts.hashResolver || (() => null);
+    const de = { flags: r.i32(), floats: [], vec3s: [], quats: [], ints: [], longs: [], strings: [], bytes: [] };
+    const nm = (e) => { const n = resolve(e.hash); if (n) e.name = n; return e; };
+    const f = de.flags;
+    if (f & ~(DE.FLOATS | DE.VEC3S | DE.QUATS | DE.INTS | DE.STRINGS | DE.LONGS | DE.BYTES | DE.PERSISTENT | DE.DISTANT | DE.PRIORITY))
+      throw new Error(`DataEntry has unsupported flag bits (0x${(f >>> 0).toString(16)}); refusing to guess the layout`);
+    if (f & DE.FLOATS) { const n = r.u8(); for (let i = 0; i < n; i++) de.floats.push(nm({ hash: r.i32(), value: r.f32() })); }
+    if (f & DE.VEC3S)  { const n = r.u8(); for (let i = 0; i < n; i++) de.vec3s.push(nm({ hash: r.i32(), value: { x: r.f32(), y: r.f32(), z: r.f32() } })); }
+    if (f & DE.QUATS)  { const n = r.u8(); for (let i = 0; i < n; i++) de.quats.push(nm({ hash: r.i32(), value: { x: r.f32(), y: r.f32(), z: r.f32(), w: r.f32() } })); }
+    if (f & DE.INTS)   { const n = r.u8(); for (let i = 0; i < n; i++) de.ints.push(nm({ hash: r.i32(), value: r.i32() })); }
+    if (f & DE.LONGS)  { const n = r.u8(); for (let i = 0; i < n; i++) de.longs.push(nm({ hash: r.i32(), value: r.i64() })); }
+    if (f & DE.STRINGS){ const n = r.u8(); for (let i = 0; i < n; i++) de.strings.push(nm({ hash: r.i32(), value: r.str() })); }
+    if (f & DE.BYTES)  { const n = r.u8(); for (let i = 0; i < n; i++) de.bytes.push(nm({ hash: r.i32(), value: r.bytesArr() })); }
+    if (f & DE.PERSISTENT) de.persistent = r.bool();
+    if (f & DE.DISTANT)    de.distant = r.bool();
+    if (f & DE.PRIORITY)   de.priority = r.u8();
+    if (r.off !== r.len) throw new Error(`DataEntry blob length mismatch: consumed ${r.off} of ${r.len} bytes`);
+    return de;
+  },
+
+  // entry object -> base64. Emits flags from content; persistent/distant only when
+  // truthy (matches the Infinity Hammer writer), priority whenever it is defined.
+  serialize(de) {
+    const w = new BinWriter();
+    let flags = 0;
+    const has = (a) => a && a.length > 0;
+    if (has(de.floats)) flags |= DE.FLOATS;
+    if (has(de.vec3s)) flags |= DE.VEC3S;
+    if (has(de.quats)) flags |= DE.QUATS;
+    if (has(de.ints)) flags |= DE.INTS;
+    if (has(de.strings)) flags |= DE.STRINGS;
+    if (has(de.longs)) flags |= DE.LONGS;
+    if (has(de.bytes)) flags |= DE.BYTES;
+    if (de.persistent) flags |= DE.PERSISTENT;
+    if (de.distant) flags |= DE.DISTANT;
+    if (de.priority !== undefined) flags |= DE.PRIORITY;
+    w.i32(flags);
+    const cnt = (a, label) => {
+      if (a.length > 255) throw new Error(`DataEntry ${label} bucket has ${a.length} entries; format count is a single byte`);
+      w.u8(a.length);
+    };
+    if (has(de.floats)) { cnt(de.floats, 'float'); for (const e of de.floats) { w.i32(e.hash); w.f32(e.value); } }
+    if (has(de.vec3s))  { cnt(de.vec3s, 'vec3');  for (const e of de.vec3s) { w.i32(e.hash); w.f32(e.value.x); w.f32(e.value.y); w.f32(e.value.z); } }
+    if (has(de.quats))  { cnt(de.quats, 'quat');  for (const e of de.quats) { w.i32(e.hash); w.f32(e.value.x); w.f32(e.value.y); w.f32(e.value.z); w.f32(e.value.w); } }
+    if (has(de.ints))   { cnt(de.ints, 'int');    for (const e of de.ints) { w.i32(e.hash); w.i32(e.value); } }
+    if (has(de.longs))  { cnt(de.longs, 'long');  for (const e of de.longs) { w.i32(e.hash); w.i64(e.value); } }
+    if (has(de.strings)){ cnt(de.strings, 'string'); for (const e of de.strings) { w.i32(e.hash); w.str(e.value); } }
+    if (has(de.bytes))  { cnt(de.bytes, 'bytes'); for (const e of de.bytes) { w.i32(e.hash); w.bytesArr(e.value); } }
+    if (de.persistent) w.bool(true);
+    if (de.distant) w.bool(true);
+    if (de.priority !== undefined) w.u8(de.priority);
+    return b64encode(new Uint8Array(w.toBuffer()));
+  },
+};
+
+// ----------------------------------------------------------------------------
+// Infinity Hammer Blueprint.Center('') emulation (see Blueprint.cs).
+// Quirks preserved deliberately:
+//   - Unity `new Bounds()` starts at the origin, so (0,0,0) is always inside
+//     the encapsulated bounds -> XZ center is pulled toward the origin when
+//     the pieces don't straddle it.
+//   - Y is the minimum piece Y (objects only, origin NOT included).
+//   - A piece matching centerPiece overrides: center = its pos, and the
+//     inverse of its rotation is applied to everything.
+// Returns {center:{x,y,z}, rot:{x,y,z,w}|null}.
+// ----------------------------------------------------------------------------
+function ihCenter(pieces, centerPiece = '', includeOrigin = true) {
+  if (pieces.length === 0) return { center: { x: 0, y: 0, z: 0 }, rot: null };
+  // includeOrigin replicates Unity's `new Bounds()` starting at (0,0,0) — the
+  // loader's recompute path. The writer centers by the TRUE bbox instead, so
+  // that the loader's origin-augmented recompute still comes out exactly zero
+  // (a truly centered build always straddles the origin).
+  let minX = includeOrigin ? 0 : Infinity, maxX = includeOrigin ? 0 : -Infinity;
+  let minZ = includeOrigin ? 0 : Infinity, maxZ = includeOrigin ? 0 : -Infinity;
+  let minY = Infinity;
+  for (const p of pieces) {
+    minX = Math.min(minX, p.pos.x); maxX = Math.max(maxX, p.pos.x);
+    minZ = Math.min(minZ, p.pos.z); maxZ = Math.max(maxZ, p.pos.z);
+    minY = Math.min(minY, p.pos.y);
+  }
+  let center = { x: (minX + maxX) / 2, y: minY, z: (minZ + maxZ) / 2 };
+  let rot = null;
+  if (centerPiece) {
+    const c = pieces.find(p => p.name === centerPiece);
+    if (c) { center = { ...c.pos }; rot = quatInverse(c.rot); }
+  }
+  return { center, rot };
+}
+function quatInverse(q) { return { x: -q.x, y: -q.y, z: -q.z, w: q.w }; }
+function quatRotate(q, v) { // q * v
+  const { x, y, z, w } = q;
+  const ix = w * v.x + y * v.z - z * v.y, iy = w * v.y + z * v.x - x * v.z,
+        iz = w * v.z + x * v.y - y * v.x, iw = -x * v.x - y * v.y - z * v.z;
+  return {
+    x: ix * w + iw * -x + iy * -z - iz * -y,
+    y: iy * w + iw * -y + iz * -x - ix * -z,
+    z: iz * w + iw * -z + ix * -y - iy * -x,
+  };
+}
+function quatMul(a, b) {
+  return {
+    x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+    y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+    z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+    w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+  };
+}
+
+// GetExtraInfo emulation (HammerSave.cs): purely cosmetic display string.
+function ihExtraInfo(z) {
+  const find = (arr, name) => arr.find(e => e.hash === getStableHashCode(name));
+  let info = '';
+  const text = find(z.strings, 'text'); if (text) info = text.value;
+  const tamed = find(z.strings, 'TamedName'); if (tamed) info = tamed.value;
+  const tag = find(z.strings, 'tag'); if (tag) info = tag.value;
+  const item = find(z.strings, 'item');
+  if (item) {
+    const v = find(z.ints, 'variant');
+    info = v && v.value !== 0 ? `${item.value}:${v.value}` : item.value;
+  }
+  const pose = find(z.ints, 'pose');
+  const slot0 = find(z.strings, '0_item');
+  if (pose && slot0) { // armor stand approximation from ZDO vars
+    const slots = [];
+    for (let j = 0; ; j++) {
+      const si = find(z.strings, `${j}_item`);
+      if (!si) break;
+      const sv = find(z.ints, `${j}_variant`);
+      slots.push(`${si.value}:${sv ? sv.value : 0}`);
+    }
+    info = `${pose.value}:${slots.length}:${slots.join(':')}`;
+  }
+  return info;
+}
+
+// ----------------------------------------------------------------------------
+// IH blueprint flavor: parse + serialize on top of the shared line grammar.
+// ----------------------------------------------------------------------------
+function parseXZY(s) { // HammerHelper.PrintXZY writes x,z,y
+  const p = s.split(',').map(t => invariantFloat(t.trim()));
+  return { x: p[0] || 0, y: p[2] || 0, z: p[1] || 0 };
+}
+function printXZY(v) { return `${shortestFloat32(v.x)},${shortestFloat32(v.z)},${shortestFloat32(v.y)}`; }
+
+// Parse an IH-or-PlanBuild blueprint. Detects flavor; when a piece line carries
+// a 14th data field, the DataEntry blob populates the ZDO buckets outright and
+// additionalInfo detection is skipped for that piece.
+function parseBlueprintUnified(text, opts = {}) {
+  const resolve = opts.hashResolver || (() => null);
+  const ir = emptyIR('blueprint');
+  const rep = ir.reports;
+  let section = 'pieces';
+  let coordinates = null, rotationHdr = null, centerPiece = '';
+  const rawPieces = [];
+  // A piece line is standalone-valid if it has a name and numeric pos/rot.
+  // Infinity Hammer's writer emits raw sign text into the info field, so a
+  // newline inside sign text splits one piece across several lines; heal by
+  // rejoining continuations (empty name / non-numeric transform) with '\n'.
+  const validPieceLine = (l) => {
+    const p = l.split(';');
+    if (p.length < 9 || !p[0]) return false;
+    for (let i = 2; i <= 8; i++) if (p[i] === undefined || p[i] === '' || !Number.isFinite(invariantFloat(p[i], NaN))) return false;
+    return true;
+  };
+  const pieceLines = [];
+  let healed = 0;
+  for (let rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    if (!line) continue;
+    const low = line.toLowerCase();
+    if (line.startsWith('#') && !/^#0x[0-9A-Fa-f]+;/.test(line)) {
+      if (low.startsWith('#name:')) ir.meta.name = line.slice(6);
+      else if (low.startsWith('#creator:')) ir.meta.creator = line.slice(9);
+      else if (low.startsWith('#description:')) {
+        const d = line.slice(13);
+        ir.meta.description = (d.startsWith('"') && d.endsWith('"')) ? jsonDecodeMaybe(d) : d;
+      }
+      else if (low.startsWith('#category:')) ir.meta.category = line.slice(10);
+      else if (low.startsWith('#center:')) { centerPiece = line.slice(8); }
+      else if (low.startsWith('#coordinates:')) coordinates = parseXZY(line.slice(13));
+      else if (low.startsWith('#rotation:')) rotationHdr = parseXZY(line.slice(10));
+      else if (low.startsWith('#snappoints')) section = 'snap';
+      else if (low.startsWith('#terrain')) section = 'terrain';
+      else if (low.startsWith('#pieces')) section = 'pieces';
+      else if (low.startsWith('#height') || low.startsWith('#paint')) {
+        section = 'ihterrain';
+        rep.warnings.push('Infinity Hammer #Height/#Paint terrain data is not converted (dropped)');
+      }
+      continue;
+    }
+    let l = line;
+    if (l.includes(',') && !l.includes('.') && section !== 'ihterrain') { l = l.replace(/,/g, '.'); rep.warnings.push('Legacy comma decimal separators repaired on one line'); }
+    if (section === 'snap') {
+      const p = l.split(';');
+      ir.snapPoints.push({ x: invariantFloat(p[0]), y: invariantFloat(p[1]), z: invariantFloat(p[2]) });
+    } else if (section === 'terrain') {
+      ir.terrainMods.push(l);
+    } else if (section === 'pieces') {
+      if (!validPieceLine(l) && pieceLines.length) { pieceLines[pieceLines.length - 1] += '\n' + l; healed++; }
+      else pieceLines.push(l);
+    }
+  }
+  if (healed) rep.warnings.push(`Healed ${healed} piece line(s) split by raw newlines in sign text (Infinity Hammer writer quirk)`);
+  for (const l of pieceLines) {
+    const p = l.split(';');
+    rawPieces.push({
+      name: p[0], category: p[1] || '',
+      pos: { x: invariantFloat(p[2]), y: invariantFloat(p[3]), z: invariantFloat(p[4]) },
+      rot: normalizeQuat({ x: invariantFloat(p[5]), y: invariantFloat(p[6]), z: invariantFloat(p[7]), w: invariantFloat(p[8], 1) }),
+      additionalInfo: p.length > 9 ? p[9] : '',
+      scale: { x: invariantFloat(p[10], 1), y: invariantFloat(p[11], 1), z: invariantFloat(p[12], 1) },
+      data: p.length > 13 ? p[13] : '',
+      chance: invariantFloat(p[14], 1),
+    });
+  }
+  const hasData = rawPieces.some(p => p.data);
+  const flavor = (hasData || coordinates !== null) ? 'infinityhammer' : 'planbuild';
+  ir.meta.blueprintFlavor = flavor;
+  ir.meta.ihCoordinates = coordinates;
+  ir.meta.ihRotation = rotationHdr;
+  ir.meta.ihCenterPiece = centerPiece;
+
+  // Absolute anchoring: replicate what hammer_restore does — Center('') is
+  // re-run on load, then the ghost is placed at #Coordinates.
+  let shift = { x: 0, y: 0, z: 0 }, crot = null;
+  if (coordinates) {
+    const c = ihCenter(rawPieces, centerPiece);
+    shift = c.center; crot = c.rot;
+  }
+  let index = 0;
+  for (const pc of rawPieces) {
+    let pos = { x: pc.pos.x - shift.x, y: pc.pos.y - shift.y, z: pc.pos.z - shift.z };
+    let rot = pc.rot;
+    if (crot) { pos = quatRotate(crot, pos); rot = normalizeQuat(quatMul(crot, rot)); }
+    if (coordinates) pos = { x: pos.x + coordinates.x, y: pos.y + coordinates.y, z: pos.z + coordinates.z };
+    const sentinel = /^#0x([0-9A-Fa-f]+)$/.exec(pc.name);
+    let z;
+    if (pc.data) {
+      let de;
+      try { de = dataEntryCodec.parse(pc.data, { hashResolver: resolve }); }
+      catch (e) {
+        rep.warnings.push(`Piece ${index} (${pc.name}): unreadable data blob (${e.message}); fell back to additionalInfo`);
+        de = null;
+      }
+      if (de) {
+        z = emptyZdo();
+        if (sentinel) { z.prefabName = null; z.prefabHash = parseInt(sentinel[1], 16) | 0; }
+        else { z.prefabName = pc.name; z.prefabHash = getStableHashCode(pc.name); }
+        z.floats = de.floats; z.vec3s = de.vec3s; z.quats = de.quats;
+        z.ints = de.ints; z.longs = de.longs; z.strings = de.strings; z.bytes = de.bytes;
+        z.persistent = de.persistent === true;               // absent => writer saw false
+        z.distant = de.distant === true;
+        z.type = de.priority !== undefined ? de.priority : 0;
+        z._addInfoKind = 'ih-data';
+      }
+    }
+    if (!z) {
+      z = pieceToZdo(pc, index, rep, opts.overrides || {});
+      if (sentinel) { z.prefabName = null; z.prefabHash = parseInt(sentinel[1], 16) | 0; }
+      z.type = 2; // Solid default for plain build pieces; game self-corrects anyway
+    }
+    z.uidUser = 0n; z.uidId = index + 1;
+    z.pos = { x: Math.fround(pos.x), y: Math.fround(pos.y), z: Math.fround(pos.z) };
+    z.rot = rot;
+    [z.sectorX, z.sectorY] = sectorOf(z.pos.x, z.pos.z);
+    // line scale -> vars, unless the blob already carries scale
+    const hasScaleVar = z.vec3s.some(e => e.hash === H.scale) || z.floats.some(e => e.hash === H.scaleScalar);
+    const s = pc.scale;
+    if (!hasScaleVar && !(s.x === 1 && s.y === 1 && s.z === 1)) {
+      if (Math.abs(s.x - s.y) < 1e-6 && Math.abs(s.x - s.z) < 1e-6)
+        z.floats.push({ hash: H.scaleScalar, name: 'scaleScalar', value: Math.fround(s.x) });
+      else
+        z.vec3s.push({ hash: H.scale, name: 'scale', value: { x: Math.fround(s.x), y: Math.fround(s.y), z: Math.fround(s.z) } });
+    }
+    z._category = pc.category;
+    z._chance = pc.chance;
+    ir.zdos.push(z);
+    index++;
+  }
+  // Snap points and origin follow the same anchoring
+  if (coordinates) {
+    ir.snapPoints = ir.snapPoints.map(sp => {
+      let p = { x: sp.x - shift.x, y: sp.y - shift.y, z: sp.z - shift.z };
+      if (crot) p = quatRotate(crot, p);
+      return { x: p.x + coordinates.x, y: p.y + coordinates.y, z: p.z + coordinates.z };
+    });
+    ir.meta.origin = { ...coordinates };
+  }
+  return ir;
+}
+
+// Serialize IR -> Infinity Hammer flavored .blueprint.
+// Pieces are emitted pre-centered (so the loader's Center('') recompute is a
+// no-op) with #Coordinates = the absolute center, which makes hammer_restore
+// reproduce the original world positions exactly.
+function serializeIHBlueprint(ir, opts = {}) {
+  const rep = opts.reports || ir.reports;
+  const includeData = opts.includeData !== false;
+  const pieces = [];
+  for (const z of ir.zdos) {
+    let name = z.prefabName;
+    if (name == null || name.startsWith('#0x')) {
+      if (opts.unresolvedPolicy === 'emit') {
+        name = name ?? ('#0x' + (z.prefabHash >>> 0).toString(16).toUpperCase());
+        rep.warnings.push(`Unresolved prefab hash ${z.prefabHash} emitted as ${name} (will not place in-game)`);
+      } else {
+        rep.losses.push({ kind: 'zdo-skipped-unresolved', prefabHash: z.prefabHash, count: 1 });
+        continue;
+      }
+    }
+    // scale: prefer explicit vars, mirror onto the line like the live game state
+    let scale = { x: 1, y: 1, z: 1 };
+    const v = z.vec3s.find(e => e.hash === H.scale);
+    const f = z.floats.find(e => e.hash === H.scaleScalar);
+    if (v) scale = { ...v.value }; else if (f) scale = { x: f.value, y: f.value, z: f.value };
+    pieces.push({ name, pos: { ...z.pos }, rot: z.rot, scale, z });
+  }
+  const { center } = ihCenter(pieces, '', false); // true bbox: see note in ihCenter
+  const fr = Math.fround;
+  const lines = [];
+  lines.push(`#Name:${ir.meta.name ?? ''}`);
+  lines.push(`#Creator:${ir.meta.creator ?? ''}`);
+  lines.push(`#Description:${ir.meta.description ?? ''}`);
+  lines.push(`#Category:${ir.meta.category ?? 'InfinityHammer'}`);
+  lines.push('#Center:');
+  lines.push(`#Coordinates:${printXZY({ x: fr(center.x), y: fr(center.y), z: fr(center.z) })}`);
+  lines.push('#Rotation:0,0,0');
+  lines.push('#SnapPoints');
+  for (const sp of ir.snapPoints)
+    lines.push([sp.x - center.x, sp.y - center.y, sp.z - center.z].map(x => shortestFloat32(fr(x))).join(';'));
+  lines.push('#Pieces');
+  pieces.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  let dataCount = 0;
+  for (const p of pieces) {
+    const z = p.z;
+    let data = '';
+    if (includeData) {
+      const de = {
+        floats: z.floats, vec3s: z.vec3s, quats: z.quats, ints: z.ints,
+        longs: z.longs, strings: z.strings, bytes: z.bytes,
+        persistent: z.persistent, distant: z.distant, priority: z.type,
+      };
+      data = dataEntryCodec.serialize(de);
+      dataCount++;
+    }
+    const info = ihExtraInfo(z);
+    const cells = [
+      p.name, '',
+      shortestFloat32(fr(p.pos.x - center.x)), shortestFloat32(fr(p.pos.y - center.y)), shortestFloat32(fr(p.pos.z - center.z)),
+      shortestFloat32(p.rot.x), shortestFloat32(p.rot.y), shortestFloat32(p.rot.z), shortestFloat32(p.rot.w),
+      info.replace(/;/g, ',').replace(/[\r\n]+/g, ' '),
+      shortestFloat32(fr(p.scale.x)), shortestFloat32(fr(p.scale.y)), shortestFloat32(fr(p.scale.z)),
+      data,
+    ];
+    if (z._chance !== undefined && z._chance !== 1) cells.push(shortestFloat32(z._chance));
+    lines.push(cells.join(';'));
+  }
+  if (includeData) rep.warnings.push(`Emitted full ZDO data blocks for ${dataCount} pieces (Infinity Hammer extended format)`);
+  return lines.join('\n') + '\n';
+}
+
+// ----------------------------------------------------------------------------
+// Container items (Inventory.Save format v106) — lifted from the proven
+// rewind-converter implementation, on BinReader/BinWriter.
+// ----------------------------------------------------------------------------
+const containerItemsCodec = {
+  parse(base64Str) {
+    const bytes = b64decode(base64Str);
+    const r = new BinReader(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    const formatVersion = r.i32();
+    if (formatVersion !== 106) return { formatVersion, items: [], unknown: true };
+    const n = r.i32();
+    const items = [];
+    for (let i = 0; i < n; i++) {
+      const item = {
+        prefabName: r.str(), stack: r.i32(), durability: r.f32(),
+        gridX: r.i32(), gridY: r.i32(), equipped: r.bool(),
+        quality: r.i32(), variant: r.i32(), crafterID: r.i64(), crafterName: r.str(),
+        customData: [],
+      };
+      const cd = r.i32();
+      for (let j = 0; j < cd; j++) item.customData.push({ key: r.str(), value: r.str() });
+      item.worldLevel = r.i32();
+      item.pickedUp = r.bool();
+      items.push(item);
+    }
+    return { formatVersion, items };
+  },
+  serialize(items) {
+    const w = new BinWriter();
+    w.i32(106); w.i32(items.length);
+    for (const it of items) {
+      w.str(it.prefabName); w.i32(it.stack || 0); w.f32(it.durability || 0);
+      w.i32(it.gridX || 0); w.i32(it.gridY || 0); w.bool(!!it.equipped);
+      w.i32(it.quality || 0); w.i32(it.variant || 0); w.i64(BigInt(it.crafterID || 0)); w.str(it.crafterName || '');
+      const cd = it.customData || [];
+      w.i32(cd.length);
+      for (const c of cd) { w.str(c.key); w.str(c.value); }
+      w.i32(it.worldLevel || 0); w.bool(!!it.pickedUp);
+    }
+    return b64encode(new Uint8Array(w.toBuffer()));
+  },
+};
+
+// ----------------------------------------------------------------------------
+// CSV bundle projection (meta.csv + zdos.csv + items.csv), column-compatible
+// with the original Rewind2csv tool so existing spreadsheets keep working.
+// Fixes the original's long-precision bug: longs stay BigInt end to end.
+// ----------------------------------------------------------------------------
+const CSV_TYPE_NAMES = ['Default', 'Prioritized', 'Solid', 'Terrain'];
+function escapeCSV(s) {
+  s = String(s ?? '');
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function parseCSVText(text) {
+  const rows = []; let row = [], cell = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else inQ = false; }
+      else cell += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ',') { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); cell = '';
+      if (row.length > 1 || row[0] !== '') rows.push(row);
+      row = [];
+    } else cell += c;
+  }
+  if (cell !== '' || row.length) { row.push(cell); if (row.length > 1 || row[0] !== '') rows.push(row); }
+  if (!rows.length) return { headers: [], rows: [] };
+  const headers = rows[0];
+  return { headers, rows: rows.slice(1).map(cells => Object.fromEntries(headers.map((h, i) => [h, cells[i] ?? '']))) };
+}
+function serializeBucketCell(entries, type, resolve) {
+  if (!entries || !entries.length) return '';
+  const parts = [];
+  for (const e of entries) {
+    const name = e.name ?? resolve(e.hash) ?? String(e.hash);
+    let val;
+    switch (type) {
+      case 'float': val = shortestFloat32(e.value); break;
+      case 'int': val = String(e.value); break;
+      case 'long': val = e.value.toString(); break;
+      case 'vec3': val = JSON.stringify({ x: +shortestFloat32(e.value.x), y: +shortestFloat32(e.value.y), z: +shortestFloat32(e.value.z) }); break;
+      case 'quat': val = JSON.stringify({ x: +shortestFloat32(e.value.x), y: +shortestFloat32(e.value.y), z: +shortestFloat32(e.value.z), w: +shortestFloat32(e.value.w) }); break;
+      case 'string': val = JSON.stringify(e.value); break;
+      case 'bytes': val = b64encode(e.value); break;
+    }
+    parts.push(`${name}=${val}`);
+  }
+  return parts.join('; ');
+}
+function deserializeBucketCell(str, type, toHash) {
+  if (!str || !str.trim()) return [];
+  const entries = []; let i = 0;
+  const len = str.length;
+  while (i < len) {
+    while (i < len && (str[i] === ' ' || str[i] === '\t')) i++;
+    if (i >= len) break;
+    const keyStart = i;
+    while (i < len && str[i] !== '=') i++;
+    if (i >= len) break;
+    const key = str.substring(keyStart, i).trim(); i++;
+    let inStr = false, depth = 0;
+    const valStart = i;
+    while (i < len) {
+      const ch = str[i];
+      if (inStr) { if (ch === '\\') { i += 2; continue; } if (ch === '"') inStr = false; }
+      else {
+        if (ch === '"') inStr = true;
+        else if (ch === '{' || ch === '[') depth++;
+        else if (ch === '}' || ch === ']') depth--;
+        else if (ch === ';' && depth === 0) break;
+      }
+      i++;
+    }
+    const rawVal = str.substring(valStart, i).trim();
+    if (i < len && str[i] === ';') i++;
+    if (!key || !rawVal) continue;
+    const hash = toHash(key);
+    switch (type) {
+      case 'float': entries.push({ hash, value: Math.fround(invariantFloat(rawVal)) }); break;
+      case 'int': entries.push({ hash, value: parseInt(rawVal, 10) | 0 }); break;
+      case 'long': entries.push({ hash, value: BigInt(rawVal) }); break;
+      case 'vec3': { const o = JSON.parse(rawVal); entries.push({ hash, value: { x: Math.fround(o.x), y: Math.fround(o.y), z: Math.fround(o.z) } }); break; }
+      case 'quat': { const o = JSON.parse(rawVal); entries.push({ hash, value: { x: Math.fround(o.x), y: Math.fround(o.y), z: Math.fround(o.z), w: Math.fround(o.w) } }); break; }
+      case 'string': entries.push({ hash, value: String(JSON.parse(rawVal)) }); break;
+      case 'bytes': entries.push({ hash, value: b64decode(rawVal) }); break;
+    }
+  }
+  return entries;
+}
+const CSV_BUCKETS = [['floats', 'float'], ['vec3s', 'vec3'], ['quats', 'quat'], ['ints', 'int'], ['longs', 'long'], ['strings', 'string'], ['bytes', 'bytes']];
+
+const csvBundleCodec = {
+  // IR -> { 'name.meta.csv': text, 'name.zdos.csv': text, 'name.items.csv': text }
+  serialize(ir, opts = {}) {
+    const resolve = opts.hashResolver || ((h) => null);
+    const rname = (h) => resolve(h) ?? String(h);
+    const m = ir.meta;
+    const metaCSV = 'version,origin_x,origin_y,origin_z,source_format,name,creator,description,category\n'
+      + [m.rewindVersion, m.origin.x, m.origin.y, m.origin.z, m.sourceFormat,
+         escapeCSV(m.name ?? ''), escapeCSV(m.creator ?? ''), escapeCSV(m.description ?? ''), escapeCSV(m.category ?? '')].join(',') + '\n';
+    const fixedCols = ['row_id', 'persistent', 'distant', 'type', 'prefab', 'pos_x', 'pos_y', 'pos_z', 'rot_x', 'rot_y', 'rot_z', 'rot_w', 'has_items'];
+    const allCols = [...fixedCols, ...CSV_BUCKETS.map(b => b[0])];
+    let zdosCSV = allCols.join(',') + '\n';
+    const itemsByZdo = [];
+    ir.zdos.forEach((z, ri) => {
+      const itemStr = z.strings.find(s => s.hash === H.items);
+      const row = {
+        row_id: ri + 1,
+        persistent: z.persistent ? '1' : '0',
+        distant: z.distant ? '1' : '0',
+        type: CSV_TYPE_NAMES[z.type] ?? String(z.type),
+        prefab: z.prefabName ?? String(z.prefabHash),
+        pos_x: shortestFloat32(z.pos.x), pos_y: shortestFloat32(z.pos.y), pos_z: shortestFloat32(z.pos.z),
+        rot_x: shortestFloat32(z.rot.x), rot_y: shortestFloat32(z.rot.y), rot_z: shortestFloat32(z.rot.z), rot_w: shortestFloat32(z.rot.w),
+        has_items: itemStr ? 'true' : 'false',
+      };
+      for (const [bucket, type] of CSV_BUCKETS) {
+        const src = bucket === 'strings' ? z.strings.filter(s => s.hash !== H.items) : z[bucket];
+        row[bucket] = serializeBucketCell(src, type, rname);
+      }
+      zdosCSV += allCols.map(h => escapeCSV(row[h])).join(',') + '\n';
+      if (itemStr) {
+        const parsed = containerItemsCodec.parse(itemStr.value);
+        if (!parsed.unknown) itemsByZdo.push({ zdoIdx: ri, items: parsed.items });
+      }
+    });
+    const customKeys = new Set();
+    for (const e of itemsByZdo) for (const it of e.items) for (const cd of it.customData) customKeys.add(cd.key);
+    const itemFixed = ['zdo_row_id', 'grid_x', 'grid_y', 'prefab', 'stack', 'durability', 'equipped', 'quality', 'variant', 'crafter_id', 'crafter_name', 'world_level', 'picked_up'];
+    const itemCols = [...itemFixed, ...[...customKeys].sort().map(k => `itemdata:${k}`)];
+    let itemsCSV = itemCols.join(',') + '\n';
+    for (const e of itemsByZdo) {
+      for (const it of e.items) {
+        const row = {
+          zdo_row_id: e.zdoIdx + 1, grid_x: it.gridX, grid_y: it.gridY, prefab: it.prefabName,
+          stack: it.stack, durability: shortestFloat32(it.durability), equipped: it.equipped ? '1' : '0',
+          quality: it.quality, variant: it.variant, crafter_id: it.crafterID.toString(), crafter_name: it.crafterName,
+          world_level: it.worldLevel, picked_up: it.pickedUp ? '1' : '0',
+        };
+        for (const cd of it.customData) row[`itemdata:${cd.key}`] = cd.value;
+        itemsCSV += itemCols.map(h => escapeCSV(row[h] !== undefined ? row[h] : '')).join(',') + '\n';
+      }
+    }
+    return { metaCSV, zdosCSV, itemsCSV };
+  },
+
+  // { metaText, zdosText, itemsText } -> IR (+ errors on ir.reports.errors)
+  parse(texts, opts = {}) {
+    const toHash = opts.nameToHash || ((k) => /^-?\d+$/.test(k) ? parseInt(k, 10) | 0 : getStableHashCode(k));
+    const ir = emptyIR('csv');
+    ir.reports.errors = [];
+    const err = (where, ri, msg) => ir.reports.errors.push({ where, row: ri, msg });
+    const meta = parseCSVText(texts.metaText || '');
+    if (meta.rows.length) {
+      const r = meta.rows[0];
+      ir.meta.rewindVersion = parseInt(r.version, 10) || 29;
+      ir.meta.origin = { x: invariantFloat(r.origin_x), y: invariantFloat(r.origin_y), z: invariantFloat(r.origin_z) };
+      if (r.name !== undefined) { ir.meta.name = r.name || null; ir.meta.creator = r.creator || null; ir.meta.description = r.description || null; ir.meta.category = r.category || null; }
+    } else ir.reports.warnings.push('meta.csv empty — defaults used (version=29, origin 0,0,0)');
+    const zdos = parseCSVText(texts.zdosText || '');
+    if (!zdos.rows.length) { err('zdos.csv', 0, 'no data rows'); return ir; }
+    const items = texts.itemsText ? parseCSVText(texts.itemsText) : { headers: [], rows: [] };
+    const itemsByRow = new Map();
+    items.rows.forEach((r, ri) => {
+      const id = parseInt(r.zdo_row_id, 10);
+      if (!Number.isFinite(id)) { err('items.csv', ri + 2, 'invalid zdo_row_id'); return; }
+      if (!itemsByRow.has(id)) itemsByRow.set(id, []);
+      const item = {
+        prefabName: r.prefab, stack: parseInt(r.stack, 10) || 0, durability: invariantFloat(r.durability),
+        gridX: parseInt(r.grid_x, 10) || 0, gridY: parseInt(r.grid_y, 10) || 0,
+        equipped: r.equipped === '1' || r.equipped === 'true', quality: parseInt(r.quality, 10) || 0,
+        variant: parseInt(r.variant, 10) || 0, crafterID: BigInt(r.crafter_id || 0), crafterName: r.crafter_name || '',
+        worldLevel: parseInt(r.world_level, 10) || 0, pickedUp: r.picked_up === '1' || r.picked_up === 'true',
+        customData: [],
+      };
+      for (const h of items.headers) if (h.startsWith('itemdata:') && r[h] !== '' && r[h] !== undefined)
+        item.customData.push({ key: h.slice(9), value: r[h] });
+      itemsByRow.get(id).push(item);
+    });
+    zdos.rows.forEach((r, ri) => {
+      const z = emptyZdo();
+      const rowId = parseInt(r.row_id, 10) || (ri + 1);
+      z.uidUser = 0n; z.uidId = rowId;
+      z.persistent = r.persistent === '1' || r.persistent === 'true';
+      z.distant = r.distant === '1' || r.distant === 'true';
+      z.type = CSV_TYPE_NAMES.indexOf(r.type) >= 0 ? CSV_TYPE_NAMES.indexOf(r.type) : (parseInt(r.type, 10) || 0);
+      z.prefabName = /^-?\d+$/.test(r.prefab) ? null : r.prefab;
+      z.prefabHash = toHash(r.prefab);
+      z.pos = { x: Math.fround(invariantFloat(r.pos_x)), y: Math.fround(invariantFloat(r.pos_y)), z: Math.fround(invariantFloat(r.pos_z)) };
+      z.rot = normalizeQuat({ x: invariantFloat(r.rot_x), y: invariantFloat(r.rot_y), z: invariantFloat(r.rot_z), w: invariantFloat(r.rot_w, 1) });
+      [z.sectorX, z.sectorY] = sectorOf(z.pos.x, z.pos.z);
+      for (const [bucket, type] of CSV_BUCKETS) {
+        try { z[bucket] = deserializeBucketCell(r[bucket], type, toHash); }
+        catch (e) { err('zdos.csv', ri + 2, `${bucket}: ${e.message}`); z[bucket] = []; }
+      }
+      const zItems = itemsByRow.get(rowId);
+      if (zItems) z.strings.push({ hash: H.items, name: 'items', value: containerItemsCodec.serialize(zItems) });
+      else if (r.has_items === 'true') ir.reports.warnings.push(`row ${rowId}: has_items=true but no items.csv rows — container emitted empty`);
+      ir.zdos.push(z);
+    });
+    for (const id of itemsByRow.keys())
+      if (id < 1 || id > zdos.rows.length) err('items.csv', 0, `zdo_row_id ${id} does not exist in zdos.csv`);
+    return ir;
+  },
+};
+
+// Extend the public API
+BFC.dataEntryCodec = dataEntryCodec;
+BFC.containerItemsCodec = containerItemsCodec;
+BFC.csvBundleCodec = csvBundleCodec;
+BFC.parseBlueprintUnified = parseBlueprintUnified;
+BFC.serializeIHBlueprint = serializeIHBlueprint;
+BFC.ihCenter = ihCenter;
+BFC.ihExtraInfo = ihExtraInfo;
+BFC.parseCSVText = parseCSVText;
+BFC.escapeCSV = escapeCSV;
+BFC.b64encode = b64encode;
+
+})();
+</script>
+<script>
+'use strict';
+/* global BFC */
+// ============================================================================
+// Valheim Build File Converter v2 — app layer.
+// Codec layer (window.BFC) does all format work; this file is UI + wiring.
+// ============================================================================
+(function () {
+
+// ------------------------------ hash table ---------------------------------
+let hashBySigned = null;   // Map<signedHash, {names:[...]}>
+let nameToHashFn = (k) => /^-?\d+$/.test(k) ? parseInt(k, 10) | 0 : BFC.getStableHashCode(k);
+
+function resolveVerified(hash) {
+  if (!hashBySigned) return null;
+  const e = hashBySigned.get(hash);
+  if (!e) return null;
+  for (const n of e.names) if (BFC.getStableHashCode(n) === hash) return n;
+  return e.names[0] ?? null;
+}
+
+async function loadHashTable() {
+  const chip = document.getElementById('hash-chip');
+  try {
+    const resp = await fetch('master_hash_lookup.json');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const table = await resp.json();
+    hashBySigned = new Map(table.map(e => [e.hash_signed, e]));
+    let enriched = 0;
+    try { // optional compound-name enrichment (ClassName_FieldName)
+      const ff = await fetch('FieldsFiltered.csv');
+      if (ff.ok) {
+        const { rows } = BFC.parseCSVText(await ff.text());
+        for (const r of rows) {
+          const cls = r.ClassName ?? r.class ?? r.Class, fld = r.FieldName ?? r.field ?? r.Field;
+          if (!cls || !fld) continue;
+          const name = `${cls}_${fld}`;
+          const h = BFC.getStableHashCode(name);
+          if (!hashBySigned.has(h)) { hashBySigned.set(h, { names: [name] }); enriched++; }
+        }
+      }
+    } catch (_) { /* optional */ }
+    chip.textContent = `Hash table: ${hashBySigned.size.toLocaleString()} entries${enriched ? ` (+${enriched} field names)` : ''}`;
+    chip.className = 'chip ok';
+    if (state.ir) refreshAll(); // re-resolve names now that the table is here
+  } catch (e) {
+    chip.textContent = 'Hash table missing — unresolved prefabs will be skipped or hex-emitted';
+    chip.className = 'chip err';
+    chip.title = 'Put master_hash_lookup.json next to this HTML file. ' + e.message;
+  }
+}
+
+// ------------------------------ state ---------------------------------------
+const state = { ir: null, baseName: 'build', sourceFmt: null, target: 'ih' };
+
+const TARGETS = [
+  { id: 'rewind', title: '.rewind', ext: '.rewind',
+    desc: 'Binary snapshot for the Rewind mod.',
+    fid: () => ({ cls: 'full', text: 'Full fidelity: every ZDO variable, flag and container survives.' }) },
+  { id: 'ih', title: '.blueprint — Infinity Hammer extended', ext: '.blueprint',
+    desc: 'PlanBuild-compatible text with per-piece ZDO data blocks. hammer_restore rebuilds at the exact original world position.',
+    fid: () => ({ cls: 'full', text: 'Near-lossless: all ZDO variables, persistent/distant/priority preserved in base64 data blocks.' }) },
+  { id: 'pb', title: '.blueprint — PlanBuild classic', ext: '.blueprint',
+    desc: 'Plain PlanBuild format for maximum mod compatibility.',
+    fid: (ir) => {
+      if (!ir) return { cls: 'geo', text: '' };
+      const n = countDroppableVars(ir);
+      return n ? { cls: 'partial', text: `Geometry + additionalInfo only — ~${n.toLocaleString()} ZDO variable(s) will be dropped (loss report on convert).` }
+               : { cls: 'full', text: 'No extra ZDO variables present — nothing to lose.' };
+    } },
+  { id: 'csv', title: 'CSV bundle', ext: '.csv',
+    desc: 'meta / zdos / items spreadsheets — edit in Excel, drop back here to rebuild.',
+    fid: () => ({ cls: 'full', text: 'Full fidelity: same columns as the original tool; longs precision-safe.' }) },
+];
+
+function countDroppableVars(ir) {
+  // cheap preview: vars beyond scale + the single additionalInfo channel
+  let n = 0;
+  for (const z of ir.zdos) {
+    let consumed = 0;
+    if (z.strings.some(e => e.hash === BFC.H.items)) consumed = 1;
+    else if (z.strings.length || z.ints.length) consumed = 1; // one channel at best
+    const total = z.floats.length + z.vec3s.length + z.quats.length + z.ints.length + z.longs.length + z.strings.length + z.bytes.length;
+    const scaleVars = (z.vec3s.some(e => e.hash === BFC.H.scale) ? 1 : 0) + (z.floats.some(e => e.hash === BFC.H.scaleScalar) ? 1 : 0);
+    n += Math.max(0, total - scaleVars - consumed);
+  }
+  return n;
+}
+
+// ------------------------------ ingestion -----------------------------------
+async function handleFiles(files) {
+  if (!files.length) return;
+  const status = document.getElementById('conv-status');
+  status.innerHTML = '';
+  document.getElementById('report').innerHTML = '';
+  try {
+    const csvs = {};
+    let mainFile = null;
+    for (const f of files) {
+      const n = f.name.toLowerCase();
+      if (n.endsWith('.csv')) {
+        if (n.includes('meta')) csvs.meta = f;
+        else if (n.includes('zdo')) csvs.zdos = f;
+        else if (n.includes('item')) csvs.items = f;
+        else csvs.zdos = csvs.zdos || f;
+      } else mainFile = mainFile || f;
+    }
+    let ir, baseName, fmt;
+    if (mainFile) {
+      const bytes = new Uint8Array(await mainFile.arrayBuffer());
+      fmt = BFC.sniffFormat(bytes, mainFile.name);
+      baseName = mainFile.name.replace(/\.(blueprint|vbuild|rewind)$/i, '');
+      if (fmt === 'rewind') {
+        ir = BFC.rewindCodec.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), { hashResolver: resolveVerified });
+      } else if (fmt === 'blueprint') {
+        ir = BFC.parseBlueprintUnified(new TextDecoder().decode(bytes), { hashResolver: resolveVerified });
+        if (ir.meta.blueprintFlavor === 'infinityhammer') fmt = 'blueprint (Infinity Hammer)';
+        else fmt = 'blueprint (PlanBuild)';
+      } else if (fmt === 'vbuild') {
+        ir = BFC.vbuildCodec.parse(new TextDecoder().decode(bytes), { id: baseName });
+      } else throw new Error(`Could not detect the format of ${mainFile.name}`);
+      ir.meta.name = ir.meta.name ?? baseName;
+    } else if (csvs.zdos) {
+      const texts = {
+        metaText: csvs.meta ? await csvs.meta.text() : '',
+        zdosText: await csvs.zdos.text(),
+        itemsText: csvs.items ? await csvs.items.text() : '',
+      };
+      ir = BFC.csvBundleCodec.parse(texts, { nameToHash: nameToHashFn });
+      if (ir.reports.errors && ir.reports.errors.length) {
+        status.innerHTML = `<div class="status err"><b>CSV validation failed:</b><div class="list">` +
+          ir.reports.errors.slice(0, 50).map(e => `${e.where} row ${e.row}: ${esc(e.msg)}`).join('\n') + `</div></div>`;
+        return;
+      }
+      // resolve prefab names for display
+      for (const z of ir.zdos) if (z.prefabName == null) z.prefabName = resolveVerified(z.prefabHash);
+      fmt = 'csv bundle';
+      baseName = csvs.zdos.name.replace(/\.?zdos\.csv$/i, '').replace(/\.csv$/i, '') || 'build';
+      ir.meta.name = ir.meta.name ?? baseName;
+    } else throw new Error('No recognizable build file among the dropped files.');
+    state.ir = ir; state.baseName = baseName; state.sourceFmt = fmt;
+    refreshAll();
+  } catch (e) {
+    console.error(e);
+    status.innerHTML = `<div class="status err"><b>Load failed:</b> ${esc(e.message)}</div>`;
+    document.getElementById('main').style.display = 'grid';
+  }
+}
+
+// ------------------------------ inspector -----------------------------------
+function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+
+function renderInspector() {
+  const ir = state.ir;
+  const el = document.getElementById('inspector');
+  const zs = ir.zdos;
+  const withData = zs.filter(z => z.floats.length + z.vec3s.length + z.quats.length + z.ints.length + z.longs.length + z.strings.length + z.bytes.length > 0).length;
+  const containers = zs.filter(z => z.strings.some(e => e.hash === BFC.H.items)).length;
+  const unresolved = zs.filter(z => z.prefabName == null).length;
+  const m = ir.meta;
+  const flavorBadge = m.blueprintFlavor ? `<span class="badge flavor">${m.blueprintFlavor}</span>` : '';
+  const hist = new Map();
+  for (const z of zs) {
+    const k = z.prefabName ?? ('#0x' + (z.prefabHash >>> 0).toString(16).toUpperCase());
+    hist.set(k, (hist.get(k) || 0) + 1);
+  }
+  const top = [...hist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const max = top.length ? top[0][1] : 1;
+  let origin = '';
+  if (m.ihCoordinates) origin = `<div class="kv">Saved at <b>${m.ihCoordinates.x.toFixed(1)}, ${m.ihCoordinates.y.toFixed(1)}, ${m.ihCoordinates.z.toFixed(1)}</b> (from #Coordinates — positions restored to absolute)</div>`;
+  else if (m.origin && (m.origin.x || m.origin.y || m.origin.z)) origin = `<div class="kv">Origin <b>${m.origin.x.toFixed(1)}, ${m.origin.y.toFixed(1)}, ${m.origin.z.toFixed(1)}</b></div>`;
+
+  el.innerHTML = `
+    <h2><span class="badge">${esc(state.sourceFmt)}</span>${flavorBadge}${esc(m.name ?? state.baseName)}</h2>
+    <div class="kv">${m.creator ? `by <b>${esc(m.creator)}</b> · ` : ''}${m.category ? `category <b>${esc(m.category)}</b> · ` : ''}${esc(m.description ?? '')}</div>
+    ${origin}
+    <div class="stats">
+      <div class="stat"><div class="n">${zs.length.toLocaleString()}</div><div class="l">objects</div></div>
+      <div class="stat"><div class="n ${withData ? 'good' : 'dim'}">${withData.toLocaleString()}</div><div class="l">with ZDO data</div></div>
+      <div class="stat"><div class="n ${containers ? '' : 'dim'}">${containers.toLocaleString()}</div><div class="l">containers</div></div>
+      <div class="stat"><div class="n ${unresolved ? 'bad' : 'dim'}">${unresolved.toLocaleString()}</div><div class="l">unresolved</div></div>
+      <div class="stat"><div class="n ${ir.snapPoints.length ? '' : 'dim'}">${ir.snapPoints.length}</div><div class="l">snap points</div></div>
+    </div>
+    <table class="hist">${top.map(([n, c]) =>
+      `<tr><td>${esc(n)}</td><td class="n">${c}</td><td style="width:34%"><div class="bar" style="width:${Math.round(100 * c / max)}%"></div></td></tr>`).join('')}
+    </table>
+    ${ir.reports.warnings.length ? `<details><summary>${ir.reports.warnings.length} source warning(s)</summary><div class="list">${dedupe(ir.reports.warnings).map(esc).join('\n')}</div></details>` : ''}
+  `;
+}
+
+function dedupe(arr) {
+  const c = new Map();
+  for (const w of arr) c.set(w, (c.get(w) || 0) + 1);
+  return [...c.entries()].map(([w, n]) => (n > 1 ? `${n}× ` : '') + w);
+}
+
+// ------------------------------ targets & options ----------------------------
+function renderTargets() {
+  const el = document.getElementById('targets');
+  el.innerHTML = '';
+  for (const t of TARGETS) {
+    const fid = t.fid(state.ir);
+    const div = document.createElement('div');
+    div.className = 'target' + (state.target === t.id ? ' sel' : '');
+    div.innerHTML = `<div class="t">${t.title}</div><div class="d">${t.desc}</div>` +
+      (fid.text ? `<div class="fid ${fid.cls}">${fid.text}</div>` : '');
+    div.onclick = () => { state.target = t.id; renderTargets(); renderOpts(); };
+    el.appendChild(div);
+  }
+}
+
+function renderOpts() {
+  const el = document.getElementById('opts');
+  const t = state.target;
+  let html = '';
+  if (t === 'pb') {
+    html += `<label>Reference point
+      <select id="opt-ref">
+        <option value="mincorner" selected>Min corner (PlanBuild convention)</option>
+        <option value="origin">Source origin</option>
+        <option value="zero">None — keep coordinates</option>
+      </select></label>`;
+  }
+  if (t === 'ih') {
+    html += `<label><input type="checkbox" id="opt-data" checked> Embed full ZDO data blocks (uncheck for a plain centered blueprint)</label>`;
+  }
+  if (t === 'pb' || t === 'ih') {
+    html += `<label><input type="checkbox" id="opt-emit"> Emit unresolved prefabs as <code>#0xHEX</code> instead of skipping</label>
+      <label>Name <input type="text" id="opt-name" placeholder="${esc(state.ir?.meta.name ?? state.baseName)}"></label>
+      <label>Creator <input type="text" id="opt-creator" placeholder="${esc(state.ir?.meta.creator ?? '')}"></label>`;
+  }
+  el.innerHTML = html;
+}
+
+// ------------------------------ convert --------------------------------------
+function download(name, data, mime) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([data], { type: mime }));
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+}
+
+function renderReport(ir) {
+  const el = document.getElementById('report');
+  let html = '';
+  const warns = dedupe(ir.reports.warnings);
+  if (warns.length)
+    html += `<details open><summary>⚠️ ${ir.reports.warnings.length} warning(s)</summary><div class="list">${warns.map(esc).join('\n')}</div></details>`;
+  const losses = BFC.summarizeLosses(ir.reports.losses);
+  if (losses.length) {
+    const total = ir.reports.losses.reduce((s, l) => s + l.count, 0);
+    html += `<details><summary>🗑️ ${total.toLocaleString()} dropped item(s) across ${losses.length} kinds</summary><div class="list">${losses.slice(0, 400).map(l => `${l.count}\t${esc(l.key)}`).join('\n')}</div></details>`;
+    html += `<button class="btn btn-sm" id="loss-dl">Download loss report</button>`;
+  }
+  el.innerHTML = html;
+  const dl = document.getElementById('loss-dl');
+  if (dl) dl.onclick = () => download(`${state.baseName}.loss-report.txt`,
+    losses.map(l => `${l.count}\t${l.key}`).join('\n'), 'text/plain');
+}
+
+function convert() {
+  const ir = state.ir;
+  if (!ir) return;
+  const status = document.getElementById('conv-status');
+  const t = state.target;
+  // fresh reports per conversion; keep source warnings visible
+  const srcWarnings = ir.reports.warnings.slice();
+  ir.reports = { warnings: srcWarnings.slice(), losses: [], errors: [] };
+  const opt = id => document.getElementById(id);
+  if (opt('opt-name') && opt('opt-name').value.trim()) ir.meta.name = opt('opt-name').value.trim();
+  if (opt('opt-creator') && opt('opt-creator').value.trim()) ir.meta.creator = opt('opt-creator').value.trim();
+  const safe = (ir.meta.name ?? state.baseName).replace(/[^\w\- ()\[\]]+/g, '_');
+  try {
+    if (t === 'rewind') {
+      if (ir.snapPoints.length) ir.reports.warnings.push(`${ir.snapPoints.length} snap point(s) are not representable in .rewind — dropped`);
+      const buf = BFC.rewindCodec.serialize(ir);
+      const check = BFC.rewindCodec.parse(buf);
+      if (check.zdos.length !== ir.zdos.length) throw new Error('self-check: ZDO count mismatch after reparse');
+      const buf2 = BFC.rewindCodec.serialize(check);
+      const a = new Uint8Array(buf), b = new Uint8Array(buf2);
+      if (a.length !== b.length) throw new Error('self-check: output not byte-stable');
+      download(`${safe}.rewind`, buf, 'application/octet-stream');
+      status.innerHTML = `<div class="status ok">✅ ${ir.zdos.length.toLocaleString()} ZDOs → <b>${esc(safe)}.rewind</b> (${buf.byteLength.toLocaleString()} bytes). Self-check passed.</div>`;
+    } else if (t === 'ih') {
+      const text = BFC.serializeIHBlueprint(ir, {
+        includeData: opt('opt-data') ? opt('opt-data').checked : true,
+        unresolvedPolicy: opt('opt-emit') && opt('opt-emit').checked ? 'emit' : 'skip',
+      });
+      const check = BFC.parseBlueprintUnified(text, { hashResolver: resolveVerified });
+      const emitted = ir.zdos.length - ir.reports.losses.filter(l => l.kind === 'zdo-skipped-unresolved').length;
+      if (check.zdos.length !== emitted) throw new Error(`self-check: reparse found ${check.zdos.length} pieces, expected ${emitted}`);
+      const varsIn = totalVars(ir), varsOut = totalVars(check);
+      if (opt('opt-data') && opt('opt-data').checked && varsOut < varsIn - ir.reports.losses.length * 50)
+        ir.reports.warnings.push(`var count after reparse: ${varsOut}/${varsIn}`);
+      download(`${safe}.blueprint`, text, 'text/plain;charset=utf-8');
+      status.innerHTML = `<div class="status ok">✅ ${check.zdos.length.toLocaleString()} pieces → <b>${esc(safe)}.blueprint</b> (Infinity Hammer). Self-check passed — ${varsOut.toLocaleString()} ZDO variables preserved.` +
+        ` Restore in-game at the original spot with <code>hammer_restore ${esc(safe)}</code>.</div>`;
+    } else if (t === 'pb') {
+      const text = BFC.blueprintCodec.serialize(ir, {
+        reference: opt('opt-ref') ? opt('opt-ref').value : 'mincorner',
+        unresolvedPolicy: opt('opt-emit') && opt('opt-emit').checked ? 'emit' : 'skip',
+      });
+      const check = BFC.blueprintCodec.parse(text, { id: safe });
+      const emitted = ir.zdos.length - ir.reports.losses.filter(l => l.kind === 'zdo-skipped-unresolved').length;
+      if (check.zdos.length !== emitted) throw new Error(`self-check: reparse found ${check.zdos.length} pieces, expected ${emitted}`);
+      download(`${safe}.blueprint`, text, 'text/plain;charset=utf-8');
+      status.innerHTML = `<div class="status ok">✅ ${check.zdos.length.toLocaleString()} pieces → <b>${esc(safe)}.blueprint</b> (PlanBuild). Self-check passed.</div>`;
+    } else { // csv
+      const bundle = BFC.csvBundleCodec.serialize(ir, { hashResolver: resolveVerified });
+      const back = BFC.csvBundleCodec.parse({ metaText: bundle.metaCSV, zdosText: bundle.zdosCSV, itemsText: bundle.itemsCSV }, { nameToHash: nameToHashFn });
+      if (back.zdos.length !== ir.zdos.length) throw new Error('self-check: CSV reparse count mismatch');
+      download(`${safe}.meta.csv`, bundle.metaCSV, 'text/csv');
+      download(`${safe}.zdos.csv`, bundle.zdosCSV, 'text/csv');
+      download(`${safe}.items.csv`, bundle.itemsCSV, 'text/csv');
+      if (ir.snapPoints.length)
+        download(`${safe}.snappoints.csv`, 'x,y,z\n' + ir.snapPoints.map(s => [s.x, s.y, s.z].map(BFC.shortestFloat32).join(',')).join('\n') + '\n', 'text/csv');
+      status.innerHTML = `<div class="status ok">✅ CSV bundle downloaded (${ir.zdos.length.toLocaleString()} rows). Edit in Excel, then drop the CSVs back here to rebuild.</div>`;
+    }
+    renderReport(ir);
+  } catch (e) {
+    console.error(e);
+    status.innerHTML = `<div class="status err"><b>Conversion failed:</b> ${esc(e.message)}</div>`;
+  }
+}
+
+function totalVars(ir) {
+  let n = 0;
+  for (const z of ir.zdos) n += z.floats.length + z.vec3s.length + z.quats.length + z.ints.length + z.longs.length + z.strings.length + z.bytes.length;
+  return n;
+}
+
+// ------------------------------ wiring ---------------------------------------
+function refreshAll() {
+  document.getElementById('main').style.display = 'grid';
+  renderInspector();
+  renderTargets();
+  renderOpts();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const drop = document.getElementById('drop');
+  const input = document.getElementById('file-input');
+  drop.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => handleFiles([...input.files]));
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('over');
+    handleFiles([...e.dataTransfer.files]);
+  });
+  document.getElementById('convert-btn').addEventListener('click', convert);
+  loadHashTable();
+});
+
+})();
+
+</script>
+</body>
+</html>

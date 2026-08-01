@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Valheim Build File Converter</title>
+<style>
+:root {
+  --bg: #12121a; --surface: #1c1c28; --surface2: #26263a; --border: #34344e;
+  --text: #e4e4ee; --text2: #9a9ab0; --accent: #7c8cf8; --accent2: #4a5ae8;
+  --ok: #4ade80; --warn: #fbbf24; --err: #f87171; --info: #60a5fa;
+  --mono: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, 'Segoe UI', sans-serif; padding: 24px; }
+.wrap { max-width: 1180px; margin: 0 auto; }
+header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+h1 { font-size: 22px; margin: 0; }
+h1 .v { color: var(--text2); font-size: 13px; font-weight: normal; }
+h2 { font-size: 15px; margin: 0 0 12px; color: var(--text); }
+.chip { font-size: 12px; padding: 3px 10px; border-radius: 20px; background: var(--surface2); border: 1px solid var(--border); color: var(--text2); }
+.chip.ok { color: var(--ok); border-color: var(--ok); }
+.chip.err { color: var(--err); border-color: var(--err); }
+
+#drop {
+  border: 2px dashed var(--border); border-radius: 12px; background: var(--surface);
+  padding: 34px 20px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+}
+#drop.over { border-color: var(--accent); background: var(--surface2); }
+#drop .big { font-size: 16px; margin-bottom: 6px; }
+#drop .hint { color: var(--text2); font-size: 12.5px; }
+#drop input { display: none; }
+
+.grid { display: grid; grid-template-columns: minmax(340px, 5fr) minmax(380px, 6fr); gap: 16px; margin-top: 16px; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+
+.badge { display: inline-block; font-size: 11.5px; font-family: var(--mono); padding: 2px 8px; border-radius: 5px; background: var(--accent2); color: #fff; margin-right: 6px; }
+.badge.flavor { background: #8b5cf6; }
+.kv { color: var(--text2); font-size: 12.5px; margin: 8px 0; word-break: break-word; }
+.kv b { color: var(--text); font-weight: 600; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 8px; margin: 12px 0; }
+.stat { background: var(--surface2); border-radius: 8px; padding: 8px 10px; text-align: center; }
+.stat .n { font-size: 17px; font-weight: 700; font-family: var(--mono); }
+.stat .l { font-size: 11px; color: var(--text2); }
+.stat .n.dim { color: var(--text2); } .stat .n.good { color: var(--ok); } .stat .n.bad { color: var(--warn); }
+
+table.hist { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 4px; }
+table.hist td { padding: 2px 6px; border-bottom: 1px solid var(--border); }
+table.hist td.n { text-align: right; font-family: var(--mono); color: var(--text2); width: 60px; }
+table.hist .bar { height: 4px; background: var(--accent2); border-radius: 2px; }
+
+.targets { display: flex; flex-direction: column; gap: 8px; }
+.target { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; cursor: pointer; background: var(--surface2); transition: border-color .12s; }
+.target.sel { border-color: var(--accent); }
+.target .t { font-weight: 600; font-size: 13.5px; }
+.target .d { color: var(--text2); font-size: 12px; margin-top: 2px; }
+.target .fid { font-size: 11.5px; margin-top: 4px; }
+.fid.full { color: var(--ok); } .fid.partial { color: var(--warn); } .fid.geo { color: var(--text2); }
+
+#opts { margin: 12px 0; font-size: 13px; display: flex; flex-direction: column; gap: 8px; }
+#opts label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+select, input[type=text] { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; }
+input[type=text] { flex: 1; min-width: 120px; }
+.btn { border: none; border-radius: 8px; padding: 9px 18px; font: 600 13.5px/1 inherit; cursor: pointer; }
+.btn-primary { background: var(--accent2); color: #fff; }
+.btn-primary:hover { background: var(--accent); }
+.btn-primary:disabled { opacity: .45; cursor: default; }
+.btn-sm { padding: 5px 12px; font-size: 12px; background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+
+.status { border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 13px; }
+.status.ok { background: #14301e; border: 1px solid var(--ok); }
+.status.err { background: #351a1a; border: 1px solid var(--err); }
+.status.warn { background: #33290f; border: 1px solid var(--warn); }
+.status.info { background: #14243a; border: 1px solid var(--info); }
+
+details { margin-top: 10px; }
+details summary { cursor: pointer; font-size: 13px; color: var(--text2); }
+.list { font-family: var(--mono); font-size: 11.5px; max-height: 260px; overflow-y: auto; background: var(--surface2); border-radius: 8px; padding: 8px 10px; margin-top: 6px; white-space: pre-wrap; }
+
+footer { margin-top: 22px; color: var(--text2); font-size: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+footer code { font-family: var(--mono); background: var(--surface2); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Valheim Build File Converter <span class="v">v2.0</span></h1>
+  <span class="chip" id="hash-chip">Loading hash table…</span>
+</header>
+
+<div id="drop">
+  <div class="big">Drop build files here <span style="color:var(--text2)">or click to browse</span></div>
+  <div class="hint">.rewind &nbsp;·&nbsp; .blueprint (PlanBuild or Infinity Hammer) &nbsp;·&nbsp; .vbuild &nbsp;·&nbsp; CSV bundle (drop meta + zdos + items together)</div>
+  <input type="file" id="file-input" multiple>
+</div>
+
+<div class="grid" id="main" style="display:none">
+  <div class="card" id="inspector"></div>
+  <div class="card">
+    <h2>Convert to</h2>
+    <div class="targets" id="targets"></div>
+    <div id="opts"></div>
+    <button class="btn btn-primary" id="convert-btn">Convert &amp; Download</button>
+    <div id="conv-status"></div>
+    <div id="report"></div>
+  </div>
+</div>
+
+<footer>
+  <b>Notes.</b> Infinity Hammer output is written pre-centered with <code>#Coordinates</code> set to the absolute world center, so
+  <code>hammer_restore &lt;name&gt;</code> rebuilds at the exact original position — with full per-piece ZDO data (health, container items,
+  tames, sign text, growth timers…). Place this file next to <code>master_hash_lookup.json</code> (and optionally
+  <code>FieldsFiltered.csv</code>) for prefab/variable name resolution. CSV bundles keep the same columns as the original
+  Rewind2csv tool, so existing spreadsheets keep working; longs are now precision-safe.
+</footer>
+</div>
+<!--CODECS-->
+<!--APP-->
+</body>
+</html>
