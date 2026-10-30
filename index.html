@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Valheim Build File Converter v4</title>
+<title>Valheim Build File Converter v5</title>
 <style>
 :root {
   --bg: #12121a; --surface: #1c1c28; --surface2: #26263a; --border: #34344e;
@@ -30,8 +30,9 @@ h3 { font-size: 13px; margin: 14px 0 6px; }
 #drop .hint { color: var(--text2); font-size: 12.5px; }
 #drop input { display: none; }
 
-.grid { display: grid; grid-template-columns: minmax(420px, 7fr) minmax(360px, 5fr); gap: 16px; margin-top: 16px; }
-@media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+.grid { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; margin-top: 16px; align-items: start; }
+#convert-card { order: -1; }
+@media (max-width: 980px) { .grid { grid-template-columns: 1fr; } #convert-card { order: 0; } }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
 #world { display: none; margin-top: 16px; }
 
@@ -69,6 +70,7 @@ code { font-family: var(--mono); font-size: 12px; background: var(--surface2); p
 .target .t { font-weight: 600; font-size: 13.5px; }
 .target .d { color: var(--text2); font-size: 12px; margin-top: 2px; }
 .target .fid { font-size: 11.5px; margin-top: 4px; color: var(--ok); }
+.target .fid:empty { display: none; }
 
 #opts { margin: 12px 0; font-size: 13px; display: flex; flex-direction: column; gap: 8px; }
 #opts label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -77,6 +79,7 @@ code { font-family: var(--mono); font-size: 12px; background: var(--surface2); p
 .note { color: var(--text2); font-size: 11.5px; margin-top: 6px; }
 select, input[type=text] { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; }
 input[type=text] { min-width: 90px; }
+input[type=text][size] { min-width: 0; width: auto; }
 .btn { border: none; border-radius: 8px; padding: 9px 18px; font: 600 13.5px/1 inherit; cursor: pointer; }
 .btn-primary { background: var(--accent2); color: #fff; } .btn-primary:hover { background: var(--accent); } .btn-primary:disabled { opacity: .45; cursor: default; }
 .btn-sm { padding: 5px 12px; font-size: 12px; background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
@@ -92,13 +95,13 @@ footer { margin-top: 22px; color: var(--text2); font-size: 12px; border-top: 1px
 <body>
 <div class="wrap">
 <header>
-  <h1>Valheim Build File Converter <span class="v">v4.0</span></h1>
+  <h1>Valheim Build File Converter <span class="v">v5.0</span></h1>
   <span class="chip" id="cat-chip">Loading catalog…</span>
 </header>
 
 <div id="drop">
   <div class="big">Drop build files or a world folder here <span style="color:var(--text2)">or click to browse</span></div>
-  <div class="hint">.rewind &nbsp;·&nbsp; .blueprint (Infinity Hammer; PlanBuild import only) &nbsp;·&nbsp; .vbuild &nbsp;·&nbsp; CSV bundle &nbsp;·&nbsp; 1.0 world chunks (<code>.chunks</code> + <code>.chunk</code> files)
+  <div class="hint">Rewind (no extension) &nbsp;·&nbsp; .blueprint (Infinity Hammer; PlanBuild import only) &nbsp;·&nbsp; .vbuild &nbsp;·&nbsp; CSV bundle &nbsp;·&nbsp; 1.0 world chunks (<code>.chunks</code> + <code>.chunk</code> files)
     &nbsp;·&nbsp; <button class="btn btn-sm" id="pick-folder">Open world folder…</button> &nbsp;·&nbsp; a <code>catalog.json</code> or names <code>.json</code> to load newer names</div>
   <input type="file" id="file-input" multiple>
   <input type="file" id="folder-input" webkitdirectory multiple>
@@ -108,7 +111,7 @@ footer { margin-top: 22px; color: var(--text2); font-size: 12px; border-top: 1px
 
 <div class="grid" id="main" style="display:none">
   <div class="card" id="inspector"></div>
-  <div class="card">
+  <div class="card" id="convert-card">
     <h2>Convert to</h2>
     <div class="targets" id="targets"></div>
     <div id="opts"></div>
@@ -2217,7 +2220,9 @@ BFC.b64encode = b64encode;
         const r = new Items.Rd(bytes.subarray(1));
         it = Items.readCompact(r, bytes[0], nameOfHash);
       } else {
-        it = { stack: num(val(z, 'ints', H.stack), 1) || 1, quality: num(val(z, 'ints', H.quality), 1) || 1, crafterName: val(z, 'strings', H.crafterName) || '' };
+        // ArmorStand slots keep their own "<i>_stack" / "<i>_quality" / "<i>_crafterName"; an ItemStand uses the plain keys
+        const own = (bucket, key, plainHash) => (prefix === '' ? val(z, bucket, plainHash) : (val(z, bucket, slotHash(slot, key)) ?? val(z, bucket, plainHash)));
+        it = { stack: num(own('ints', 'stack', H.stack), 1) || 1, quality: num(own('ints', 'quality', H.quality), 1) || 1, crafterName: own('strings', 'crafterName', H.crafterName) || '' };
       }
       return { prefab: name, stack: it.stack || 1, quality: it.quality || 1, crafterName: it.crafterName || '' };
     }
@@ -2400,6 +2405,7 @@ BFC.b64encode = b64encode;
           }
         }
       }
+      res.uniques.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || b.level - a.level);   // alphabetical by item name (tracker row U1..U8 follows)
       for (const [name, r] of res.inert) res.assumed.add(`${name} x${r.objects}: inventory data (${r.items} items) on a prefab with no Container component - ignored, players cannot open it`);
       if (res.unknownItems.size) warn(`${res.unknownItems.size} unresolved item prefab hash(es) found in containers/stands (listed under "Unresolved items"); they count as 0 gold`);
       return res;
@@ -2547,7 +2553,7 @@ BFC.b64encode = b64encode;
       </div>
       <div class="tools">
         <label><input type="checkbox" id="cr-hoursOn" ${S.hoursOn ? 'checked' : ''}> Add respawn yield (pickables, spawners) for</label>
-        <input type="text" id="cr-hours" size="4" value="${S.hours}" ${S.hoursOn ? '' : 'disabled'}> hour(s)
+        <input type="text" id="cr-hours" size="3" value="${S.hours}" ${S.hoursOn ? '' : 'disabled'}> hour(s)
       </div>
       <div class="tools">
         <label><input type="checkbox" id="cr-ward" ${S.countWarded ? 'checked' : ''}> Count items on warded or locked item/armor stands</label>
@@ -2621,7 +2627,7 @@ BFC.b64encode = b64encode;
         let fmt = BFC.sniffFormat(bytes, f.name), ir;
         if (fmt === 'rewind') ir = BFC.rewindCodec.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), { hashResolver: resolve });
         else if (fmt === 'blueprint') ir = BFC.parseBlueprintUnified(new TextDecoder().decode(bytes), { hashResolver: resolve });
-        else throw new Error('only .rewind and .blueprint files can be added here');
+        else throw new Error('only Rewinds and .blueprint files can be added here');
         for (const z of ir.zdos) if (z.prefabName == null) z.prefabName = resolve(z.prefabHash);
         added.push({ name: f.name.replace(/\.(blueprint|rewind)$/i, ''), ir, on: true });
       } catch (e) { failed.push(`${f.name}: ${e.message}`); }
@@ -2837,14 +2843,14 @@ BFC.b64encode = b64encode;
     const esc = S.deps.esc;
     const res = compute(ctx);
     const controls = `
-      <div class="kv"><b>Enemy difficulty</b> — uses the files ticked on the Creators tab.</div>
+      <div class="kv"><b>Enemy difficulty</b> — uses the files ticked on the Loot tab.</div>
       <div class="tools">
         Link distance <input type="text" id="en-link" size="3" value="${S.linkDist}"> m
         · room radius <input type="text" id="en-room" size="3" value="${S.roomRadius}"> m
         · area-attack efficiency <input type="text" id="en-aoe" size="3" value="${S.aoe}"> %
         · party DPS <input type="text" id="en-dps" size="4" value="${S.partyDps}"> <span class="dim">(0 = no time estimate)</span>
       </div>`;
-    if (!res) return controls + '<p class="dim">Load a file or tick one on the Creators tab.</p>';
+    if (!res) return controls + '<p class="dim">Load a file or tick one on the Loot tab.</p>';
     const t = res.totals;
     const flagCell = (fl) => (fl.length ? `<span class="warn">${esc(fl.join(' · '))}</span>` : '');
     const groupRows = res.groups.map((g) => {
@@ -2942,10 +2948,752 @@ BFC.b64encode = b64encode;
 })(typeof window !== 'undefined' ? window : null);
 
 </script>
+<script>
+/*
+ * bfc-batch.js - the "Batch edit" tab of Build File Converter v5: conditional bulk edits of ZDO keys and component fields.
+ *
+ *   BFBatch.init({ getCat, data, esc, download })     once, at boot   (data = loot-data JSON, optional: only used for prefab base HP)
+ *   BFBatch.html(ctx) / BFBatch.wire(ctx)             from the inspector tab renderer
+ *     ctx = { ir, name, rerender, setIR }
+ *   BFBatch.createEngine({ cat, data }).run(ir, rules)   pure logic (Node + browser), returns the edited zdo list + a report
+ *
+ * A rule is plain JSON:
+ *   { name, enabled, prefab, component, where, actions: [ { op, key, type, value } ] }
+ *     prefab     comma/space separated globs, "!" excludes:  "wood_*, !wood_floor*"   (empty = every prefab)
+ *     component  the prefab must have this component (base classes count: "Character" matches Humanoid prefabs)
+ *     where      expression, evaluated on the object's state before the rule's actions run
+ *     op         set | setDefault (only when the key is absent) | remove
+ *     key        a ZDO key ("health") or a component field ("WearNTear.m_health")
+ *     type       bool | int | float | long | string | vec3 | quat; empty = take it from the object or the catalog
+ *     value      expression ("-1", "false", "key('health') * 2", "poolHp()")
+ * Rules run in order, each one sees the result of the one before.  Nothing is written to the loaded file until "Apply".
+ */
+(function (root) {
+  'use strict';
+
+  const BK = ['floats', 'vec3s', 'quats', 'ints', 'longs', 'strings', 'bytes'];
+  const BUCKET_TYPE = { floats: 'float', ints: 'int', longs: 'long', strings: 'string', vec3s: 'vec3', quats: 'quat', bytes: 'bytes' };
+  const TYPE_BUCKET = { bool: 'ints', int: 'ints', float: 'floats', long: 'longs', string: 'strings', vec3: 'vec3s', quat: 'quats' };
+  const CAT_FIELD_TYPE = { bool: 'bool', int: 'int', float: 'float', string: 'string', Vector3: 'vec3', GameObject: 'string', ItemDrop: 'string' };
+  const TYPES = ['', 'bool', 'int', 'float', 'long', 'string', 'vec3', 'quat'];
+  const OPS = ['set', 'setDefault', 'remove'];
+  const KILL_CLASSES = ['Character', 'WearNTear', 'Destructible', 'TreeBase', 'TreeLog', 'MineRock', 'MineRock5'];
+  const hexName = (h) => '#0x' + (h >>> 0).toString(16).toUpperCase().padStart(8, '0');
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // expression language: numbers, 'strings', true/false/null, + - * / %, comparisons, && || ! (and / or / not), a ? b : c,
+  // function calls.  true = 1 and false = 0 (bool keys are stored as 0/1).  No eval: expressions compile to closures.
+  // ---------------------------------------------------------------------------------------------------------------
+  class ExprError extends Error {}
+  function tokenize(src) {
+    const out = [];
+    let i = 0;
+    const n = src.length;
+    while (i < n) {
+      const ch = src[i];
+      if (/\s/.test(ch)) { i++; continue; }
+      let m;
+      const rest = src.slice(i);
+      if ((m = /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/.exec(rest))) { out.push({ t: 'num', v: parseFloat(m[0]) }); i += m[0].length; continue; }
+      if (ch === '"' || ch === "'") {
+        let j = i + 1, s = '';
+        while (j < n && src[j] !== ch) { if (src[j] === '\\' && j + 1 < n) j++; s += src[j]; j++; }
+        if (j >= n) throw new ExprError('unterminated string');
+        out.push({ t: 'str', v: s }); i = j + 1; continue;
+      }
+      if ((m = /^[A-Za-z_]\w*/.exec(rest))) {
+        const lw = m[0].toLowerCase();
+        if (lw === 'and') out.push({ t: 'op', v: '&&' });
+        else if (lw === 'or') out.push({ t: 'op', v: '||' });
+        else if (lw === 'not') out.push({ t: 'op', v: '!' });
+        else out.push({ t: 'id', v: m[0] });
+        i += m[0].length; continue;
+      }
+      const two = src.substr(i, 2);
+      if (['&&', '||', '==', '!=', '<=', '>='].includes(two)) { out.push({ t: 'op', v: two }); i += 2; continue; }
+      if ('+-*/%<>()?:,!='.includes(ch)) { out.push({ t: 'op', v: ch === '=' ? '==' : ch }); i++; continue; }
+      throw new ExprError(`unexpected character "${ch}"`);
+    }
+    return out;
+  }
+
+  const truthy = (v) => !(v == null || v === 0 || v === '' || (typeof v === 'number' && Number.isNaN(v)));
+  const isNum = (v) => typeof v === 'number';
+  const close = (a, b) => a === b || (Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(a), Math.abs(b)));
+  const eq = (a, b) => {
+    if (a == null || b == null) return a == null && b == null;
+    if (typeof a === 'string' || typeof b === 'string') return String(a) === String(b);
+    return isNum(a) && isNum(b) ? close(a, b) : a === b;
+  };
+  const cmp = (op, a, b) => {
+    let x = a, y = b;
+    if (isNum(x) && isNum(y)) { /* numbers */ } else if (typeof x === 'string' && typeof y === 'string') { /* strings */ } else return false;
+    if (Number.isNaN(x) || Number.isNaN(y)) return false;
+    return op === '<' ? x < y : op === '>' ? x > y : op === '<=' ? x <= y : x >= y;
+  };
+  const arith = (op, a, b) => {
+    if (!isNum(a) || !isNum(b)) return NaN;
+    return op === '-' ? a - b : op === '*' ? a * b : op === '/' ? a / b : a % b;
+  };
+  const plus = (a, b) => (typeof a === 'string' || typeof b === 'string' ? String(a ?? '') + String(b ?? '') : isNum(a) && isNum(b) ? a + b : NaN);
+
+  function compileExpr(src, funcs, vars) {
+    const toks = tokenize(String(src));
+    let p = 0;
+    const peekOp = (v) => p < toks.length && toks[p].t === 'op' && toks[p].v === v;
+    const eatOp = (v) => { if (peekOp(v)) { p++; return true; } return false; };
+    const need = (v) => { if (!eatOp(v)) throw new ExprError(`expected "${v}"`); };
+    function ternary() {
+      const c = orx();
+      if (eatOp('?')) { const a = ternary(); need(':'); const b = ternary(); return (x) => (truthy(c(x)) ? a(x) : b(x)); }
+      return c;
+    }
+    function orx() { let l = andx(); while (eatOp('||')) { const a = l, b = andx(); l = (x) => (truthy(a(x)) || truthy(b(x)) ? 1 : 0); } return l; }
+    function andx() { let l = equality(); while (eatOp('&&')) { const a = l, b = equality(); l = (x) => (truthy(a(x)) && truthy(b(x)) ? 1 : 0); } return l; }
+    function equality() {
+      let l = rel();
+      for (;;) {
+        if (eatOp('==')) { const a = l, b = rel(); l = (x) => (eq(a(x), b(x)) ? 1 : 0); }
+        else if (eatOp('!=')) { const a = l, b = rel(); l = (x) => (eq(a(x), b(x)) ? 0 : 1); }
+        else return l;
+      }
+    }
+    function rel() {
+      let l = add();
+      for (;;) {
+        let op = null;
+        for (const o of ['<=', '>=', '<', '>']) if (peekOp(o)) { op = o; break; }
+        if (!op) return l;
+        p++;
+        const a = l, b = add(), o2 = op;
+        l = (x) => (cmp(o2, a(x), b(x)) ? 1 : 0);
+      }
+    }
+    function add() {
+      let l = mul();
+      for (;;) {
+        if (eatOp('+')) { const a = l, b = mul(); l = (x) => plus(a(x), b(x)); }
+        else if (eatOp('-')) { const a = l, b = mul(); l = (x) => arith('-', a(x), b(x)); }
+        else return l;
+      }
+    }
+    function mul() {
+      let l = unary();
+      for (;;) {
+        let op = null;
+        for (const o of ['*', '/', '%']) if (peekOp(o)) { op = o; break; }
+        if (!op) return l;
+        p++;
+        const a = l, b = unary(), o2 = op;
+        l = (x) => arith(o2, a(x), b(x));
+      }
+    }
+    function unary() {
+      if (eatOp('-')) { const a = unary(); return (x) => { const v = a(x); return isNum(v) ? -v : NaN; }; }
+      if (eatOp('!')) { const a = unary(); return (x) => (truthy(a(x)) ? 0 : 1); }
+      return primary();
+    }
+    function primary() {
+      const t = toks[p++];
+      if (!t) throw new ExprError('unexpected end of expression');
+      if (t.t === 'num' || t.t === 'str') return () => t.v;
+      if (t.t === 'op' && t.v === '(') { const e = ternary(); need(')'); return e; }
+      if (t.t === 'id') {
+        const lw = t.v.toLowerCase();
+        if (peekOp('(')) {
+          p++;
+          const args = [];
+          if (!peekOp(')')) { do args.push(ternary()); while (eatOp(',')); }
+          need(')');
+          const f = funcs[lw];
+          if (!f) throw new ExprError(`unknown function ${t.v}()`);
+          return (x) => f(x, ...args.map((a) => a(x)));
+        }
+        if (lw === 'true') return () => 1;
+        if (lw === 'false') return () => 0;
+        if (lw === 'null') return () => null;
+        const v = vars[lw];
+        if (!v) throw new ExprError(`unknown name "${t.v}"`);
+        return (x) => v(x);
+      }
+      throw new ExprError(`unexpected "${t.v}"`);
+    }
+    const rootFn = ternary();
+    if (p < toks.length) throw new ExprError(`unexpected "${toks[p].v}"`);
+    return rootFn;
+  }
+
+  const globCache = new Map();
+  function globRe(pat) {
+    let r = globCache.get(pat);
+    if (!r) { r = new RegExp('^' + String(pat).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i'); globCache.set(pat, r); }
+    return r;
+  }
+  function parsePatterns(text) {
+    const parts = String(text || '').split(/[\s,;]+/).filter(Boolean);
+    if (!parts.length) return null;
+    const inc = [], exc = [];
+    for (const s of parts) (s[0] === '!' ? exc : inc).push(s[0] === '!' ? s.slice(1) : s);
+    return { inc: inc.map(globRe), exc: exc.map(globRe) };
+  }
+  const matchPatterns = (pt, name) => (!pt.inc.length || pt.inc.some((r) => r.test(name))) && !pt.exc.some((r) => r.test(name));
+
+  const fmt = (v) => {
+    if (v == null) return '(absent)';
+    if (typeof v === 'bigint') return v.toString();
+    if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(+v.toPrecision(7));
+    if (typeof v === 'string') return JSON.stringify(v.length > 40 ? v.slice(0, 40) + '…' : v);
+    if (v && typeof v === 'object' && 'x' in v) return '(' + ['x', 'y', 'z', 'w'].filter((k) => k in v).map((k) => +(+v[k]).toPrecision(6)).join(', ') + ')';
+    return String(v);
+  };
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // engine
+  // ---------------------------------------------------------------------------------------------------------------
+  function createEngine(deps) {
+    const cat = deps.cat, data = deps.data || {};
+    const classes = (cat.data && cat.data.classes) || {};
+    const hashCache = new Map();
+    const hashOf = (name) => { let h = hashCache.get(name); if (h === undefined) { h = cat.nameToHash(name); hashCache.set(name, h); } return h; };
+    const chainOf = (cls) => [cls].concat((classes[cls] && classes[cls].b) || []);
+
+    const infoCache = new Map();
+    function stemInfo(stem) {
+      if (!stem) return { comps: null, chain: null };
+      let i = infoCache.get(stem);
+      if (!i) {
+        const comps = cat.prefabComponents(stem);
+        let chain = null;
+        if (comps) { chain = new Set(); for (const c of comps) for (const k of chainOf(c)) chain.add(k); }
+        i = { comps, chain };
+        infoCache.set(stem, i);
+      }
+      return i;
+    }
+    function fieldType(cls, field) {
+      for (const c of chainOf(cls)) {
+        const o = classes[c] && classes[c].o && classes[c].o.find((f) => f[0] === field);
+        if (o) return CAT_FIELD_TYPE[o[1]] || null;
+      }
+      return null;
+    }
+    // "Class.field" with a loadable field of that class -> { cls, field, type }
+    function overrideInfo(name) {
+      const m = /^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/.exec(name);
+      if (!m || !classes[m[1]]) return null;
+      const t = fieldType(m[1], m[2]);
+      return t ? { cls: m[1], field: m[2], type: t } : null;
+    }
+    let zTypeAll = null;
+    function zKeyType(name, info) {
+      if (info && info.comps) for (const c of info.comps) for (const k of chainOf(c)) {
+        const z = classes[k] && classes[k].z && classes[k].z.find((e) => e[0] === name);
+        if (z && z[2] && z[2][0]) return z[2][0];
+      }
+      if (!zTypeAll) {
+        zTypeAll = new Map();
+        for (const v of Object.values(classes)) for (const z of v.z || []) if (z[2] && z[2][0] && !zTypeAll.has(z[0])) zTypeAll.set(z[0], z[2][0]);
+      }
+      return zTypeAll.get(name) || null;
+    }
+    const catalogType = (name, info) => { const o = overrideInfo(name); return o ? o.type : zKeyType(name, info); };
+
+    // ---- value access
+    const plain = (v) => (typeof v === 'bigint' ? Number(v) : v);
+    function findEntry(z, h) {
+      for (const b of BK) { const a = z[b]; for (let i = 0; i < a.length; i++) if (a[i].hash === h) return { b, e: a[i] }; }
+      return null;
+    }
+    // "@Character.m_health" = that field on whichever concrete class of the prefab derives from Character (Humanoid for most enemies, Character for animals)
+    function resolveName(c, name) {
+      const s = String(name);
+      if (s[0] !== '@') return s;
+      const m = /^@(\w+)\.(\w+)$/.exec(s);
+      if (!m || !c.info.comps) return null;
+      const concrete = c.info.comps.find((k) => chainOf(k).includes(m[1]));
+      return concrete ? `${concrete}.${m[2]}` : null;
+    }
+    const getKey = (c, name) => { const n = resolveName(c, name); const r = n == null ? null : findEntry(c.z, hashOf(n)); return r ? plain(r.e.value) : null; };
+    const levelOf = (c) => { const v = getKey(c, 'level'); return isNum(v) ? Math.max(1, v) : 1; };
+    function baseHp(c) {                         // m_health of the prefab: override key first, then the extracted prefab default
+      if (c.info.comps) for (const cls of c.info.comps.concat([...(c.info.chain || [])])) { const v = getKey(c, cls + '.m_health'); if (isNum(v)) return v; }
+      const k = c.stem && data.kill && data.kill[c.stem];
+      if (k && k.h) for (const cls of KILL_CLASSES) if (isNum(k.h[cls])) return k.h[cls];
+      return null;
+    }
+    function mName(c) {                          // display name: an m_name override if the object has one, else the English prefab name from the loot data
+      if (c.info.comps) for (const cls of c.info.comps.concat([...(c.info.chain || [])])) { const v = getKey(c, cls + '.m_name'); if (typeof v === 'string' && v) return v; }
+      const s = c.stem && data.src && data.src[c.stem];
+      return s && s.n ? s.n : null;
+    }
+    function hpNow(c) {                          // same rule as the Enemies tab: health, else max_health, else prefab m_health x level
+      const h = getKey(c, 'health'), m = getKey(c, 'max_health');
+      if (isNum(h)) return h;
+      if (isNum(m)) return m;
+      const b = baseHp(c);
+      return b == null ? null : b * levelOf(c);
+    }
+    function poolHp(c) {                         // the object's full health pool: larger of health / max_health, else prefab m_health x level
+      const h = getKey(c, 'health'), m = getKey(c, 'max_health');
+      if (isNum(h) || isNum(m)) return Math.max(isNum(h) ? h : -Infinity, isNum(m) ? m : -Infinity);
+      const b = baseHp(c);
+      return b == null ? null : b * levelOf(c);
+    }
+    const vars = {
+      prefab: (c) => c.stem || hexName(c.z.prefabHash), x: (c) => c.z.pos.x, y: (c) => c.z.pos.y, z: (c) => c.z.pos.z, level: levelOf,
+      creator: (c) => { const v = getKey(c, 'creator'); return v == null ? 0 : v; },
+    };
+    const N = (f) => (c, ...a) => (a.every(isNum) ? f(...a) : NaN);
+    const funcs = {
+      key: (c, n) => getKey(c, n),
+      has: (c, n) => { const k = resolveName(c, n); return k != null && findEntry(c.z, hashOf(k)) ? 1 : 0; },
+      comp: (c, n) => (c.info.chain && c.info.chain.has(String(n)) ? 1 : 0),
+      glob: (c, s, pat) => (globRe(pat).test(String(s ?? '')) ? 1 : 0),
+      contains: (c, s, t) => (String(s ?? '').toLowerCase().includes(String(t ?? '').toLowerCase()) ? 1 : 0),
+      startswith: (c, s, t) => (String(s ?? '').toLowerCase().startsWith(String(t ?? '').toLowerCase()) ? 1 : 0),
+      endswith: (c, s, t) => (String(s ?? '').toLowerCase().endsWith(String(t ?? '').toLowerCase()) ? 1 : 0),
+      lower: (c, s) => String(s ?? '').toLowerCase(),
+      min: N(Math.min), max: N(Math.max), abs: N(Math.abs), round: N(Math.round), floor: N(Math.floor), ceil: N(Math.ceil),
+      sqrt: N(Math.sqrt), pow: N(Math.pow),
+      clamp: N((v, lo, hi) => Math.min(hi, Math.max(lo, v))),
+      iif: (c, t, a, b) => (truthy(t) ? a : b),
+      coalesce: (c, ...a) => { for (const v of a) if (v != null && !(isNum(v) && Number.isNaN(v))) return v; return null; },
+      num: (c, v) => (isNum(v) ? v : typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : NaN),
+      vec: (c, x, y, z) => ([x, y, z].every(isNum) ? { x, y, z } : NaN),
+      quat: (c, x, y, z, w) => ([x, y, z, w].every(isNum) ? { x, y, z, w } : NaN),
+      dist: (c, x0, z0) => (isNum(x0) && isNum(z0) ? Math.hypot(c.z.pos.x - x0, c.z.pos.z - z0) : NaN),
+      basehp: (c) => baseHp(c),
+      mname: (c) => mName(c),
+      hp: (c) => hpNow(c),
+      poolhp: (c) => poolHp(c),
+      leveldmg: (c, l) => (isNum(l) ? 1 + 0.5 * Math.max(0, l - 1) : NaN),     // Attack.cs ModifyDamage: +50% damage per level above 1
+    };
+
+    // ---- rules
+    function compileRule(rule) {
+      const out = { errors: [], where: null, acts: [] };
+      const w = String(rule.where || '').trim();
+      if (w) { try { out.where = compileExpr(w, funcs, vars); } catch (e) { out.errors.push('condition: ' + e.message); } }
+      const acts = rule.actions || [];
+      if (!acts.length) out.errors.push('no actions');
+      acts.forEach((a, i) => {
+        const op = String(a.op || 'set');
+        const act = { op: op.toLowerCase(), key: String(a.key || '').trim(), type: a.type || '', value: null };
+        if (!OPS.some((o) => o.toLowerCase() === act.op)) { out.errors.push(`action ${i + 1}: unknown op "${op}"`); return; }
+        if (!act.key) { out.errors.push(`action ${i + 1}: no key`); return; }
+        if (act.type && !TYPES.includes(act.type)) { out.errors.push(`action ${i + 1}: unknown type "${act.type}"`); return; }
+        if (act.op !== 'remove') {
+          if (!String(a.value ?? '').trim()) { out.errors.push(`action ${i + 1}: no value`); return; }
+          try { act.value = compileExpr(String(a.value), funcs, vars); } catch (e) { out.errors.push(`action ${i + 1} value: ${e.message}`); return; }
+        }
+        out.acts.push(act);
+      });
+      return out;
+    }
+    const safeEval = (fn, c) => { try { return fn(c); } catch (e) { return { __err: e.message }; } };
+
+    function coerce(type, val) {
+      if (val && val.__err) return { err: val.__err };
+      switch (type) {
+        case 'bool': return isNum(val) && !Number.isNaN(val) ? { v: val !== 0 ? 1 : 0 } : { err: 'value is not a number' };
+        case 'int': return isNum(val) && Number.isFinite(val) && Math.abs(val) < 2147483648 ? { v: Math.round(val) | 0 } : { err: 'value is not an int32' };
+        case 'float': return isNum(val) && Number.isFinite(val) ? { v: Math.fround(val) } : { err: 'value is not a finite number' };
+        case 'long': return isNum(val) && Number.isFinite(val) ? { v: BigInt(Math.round(val)) } : { err: 'value is not a finite number' };
+        case 'string': return val == null || typeof val === 'object' ? { err: 'value is not text' } : { v: String(val) };
+        case 'vec3': return val && isNum(val.x) && isNum(val.y) && isNum(val.z) ? { v: { x: Math.fround(val.x), y: Math.fround(val.y), z: Math.fround(val.z) } } : { err: 'value is not a vec(x, y, z)' };
+        case 'quat': return val && isNum(val.x) && isNum(val.y) && isNum(val.z) && isNum(val.w) ? { v: { x: Math.fround(val.x), y: Math.fround(val.y), z: Math.fround(val.z), w: Math.fround(val.w) } } : { err: 'value is not a quat(x, y, z, w)' };
+        default: return { err: 'unknown type' };
+      }
+    }
+    const same = (type, a, b) => {
+      if (type === 'float') return Math.fround(a) === Math.fround(b);
+      if (type === 'vec3' || type === 'quat') return ['x', 'y', 'z', 'w'].every((k) => Math.fround(a[k] ?? 0) === Math.fround(b[k] ?? 0));
+      return a === b;
+    };
+    function cloneZdo(z) { const o = Object.assign({}, z); for (const b of BK) o[b] = z[b].map((e) => Object.assign({}, e)); return o; }
+
+    function hasFlag(z, name) { const h = hashOf(name); const e = z.ints.find((x) => x.hash === h); return !!(e && e.value); }
+    function ensureFlags(w, cls) {
+      let added = 0;
+      for (const fname of ['HasFields', 'HasFields' + cls]) {
+        const h = hashOf(fname);
+        const e = w.ints.find((x) => x.hash === h);
+        if (!e) { w.ints.push({ hash: h, value: 1, name: fname }); added++; } else if (!e.value) { e.value = 1; added++; }
+      }
+      return added;
+    }
+
+    // one action on one object.  Reads from z (the object as it is now), writes through getW() (a private copy).
+    function applyAction(a0, val, z, getW, c) {
+      const key = resolveName(c, a0.key);
+      if (key == null) return { st: 'skip', why: `${a0.key}: prefab has no ${String(a0.key).slice(1).split('.')[0]} component` };
+      const a = key === a0.key ? a0 : Object.assign({}, a0, { key });
+      const h = hashOf(a.key);
+      if (a.op === 'remove') {
+        const only = a.type ? TYPE_BUCKET[a.type] : null;
+        const found = BK.filter((b) => (!only || b === only) && z[b].some((e) => e.hash === h));
+        if (!found.length) return { st: 'same' };
+        const before = fmt(plain(z[found[0]].find((e) => e.hash === h).value));
+        const w = getW();
+        for (const b of found) w[b] = w[b].filter((e) => e.hash !== h);
+        return { st: 'changed', line: `${a.key}: ${before} -> (removed)` };
+      }
+      if (val && val.__err) return { st: 'skip', why: `${a.key}: ${val.__err}` };
+      const ex = findEntry(z, h);
+      const ct = catalogType(a.key, c.info);
+      let type = a.type || null;
+      if (!type) {
+        if (ex) type = ct && TYPE_BUCKET[ct] === ex.b ? ct : BUCKET_TYPE[ex.b];
+        else type = ct;
+        if (!type && typeof val === 'string') type = 'string';
+      }
+      if (!type) return { st: 'skip', why: `${a.key}: unknown key type - pick a type in the action` };
+      if (type === 'bytes') return { st: 'skip', why: `${a.key}: byte arrays cannot be edited here` };
+      const ov = overrideInfo(a.key);
+      if (ov && c.info.comps && !c.info.comps.includes(ov.cls)) {
+        const real = c.info.comps.find((k) => chainOf(k).includes(ov.cls));
+        return { st: 'skip', why: `${a.key}: prefab has no ${ov.cls} component${real ? ` (the game reads ${real}.${ov.field} on this prefab)` : ''}` };
+      }
+      const r = coerce(type, val);
+      if (r.err) return { st: 'skip', why: `${a.key}: ${r.err}` };
+      const bucket = TYPE_BUCKET[type];
+      const cur = z[bucket].find((e) => e.hash === h);
+      const needFlags = ov && !(hasFlag(z, 'HasFields') && hasFlag(z, 'HasFields' + ov.cls));
+      if (a.op === 'setdefault' && cur) return { st: 'same' };
+      if (cur && same(type, cur.value, r.v) && !needFlags) return { st: 'same' };
+      const w = getW();
+      const before = cur ? fmt(plain(cur.value)) : '(absent)';
+      let changed = false, flags = 0;
+      if (!(cur && same(type, cur.value, r.v))) {
+        const e = w[bucket].find((x) => x.hash === h);
+        if (e) e.value = r.v;
+        else { const nm = cat.resolve(h) || (/^0x|^-?\d+$/.test(a.key) ? undefined : a.key); const ent = { hash: h, value: r.v }; if (nm) ent.name = nm; w[bucket].push(ent); }
+        changed = true;
+      }
+      if (ov) flags = ensureFlags(w, ov.cls);
+      return { st: 'changed', flags, line: `${a.key}: ${before} -> ${fmt(plain(r.v))}${flags ? ' (+HasFields flags)' : ''}` , changedValue: changed };
+    }
+
+    function run(ir, rules) {
+      const t0 = Date.now();
+      const zdos = ir.zdos.slice();
+      const owned = new Set(), changedObjs = new Set();
+      const reports = [];
+      for (const rule of rules) {
+        const rr = { name: rule.name || 'rule', enabled: rule.enabled !== false, errors: [], matched: 0, selected: 0, changed: 0, same: 0, skipped: new Map(), samples: [], unknownPrefab: 0, flagsAdded: 0 };
+        reports.push(rr);
+        if (!rr.enabled) continue;
+        const cr = compileRule(rule);
+        if (cr.errors.length) { rr.errors = cr.errors; continue; }
+        const pats = parsePatterns(rule.prefab);
+        const comp = String(rule.component || '').trim();
+        for (let i = 0; i < zdos.length; i++) {
+          const z = zdos[i];
+          const stem = z.prefabName || null;
+          if (pats && !matchPatterns(pats, stem || hexName(z.prefabHash))) continue;
+          const info = stemInfo(stem);
+          if (comp) {
+            if (!info.chain) { rr.unknownPrefab++; continue; }
+            if (!info.chain.has(comp)) continue;
+          }
+          rr.matched++;
+          const c = { z, stem, info };
+          if (cr.where) {
+            const v = safeEval(cr.where, c);
+            if (v && v.__err) { rr.skipped.set('condition: ' + v.__err, (rr.skipped.get('condition: ' + v.__err) || 0) + 1); continue; }
+            if (!truthy(v)) continue;
+          }
+          rr.selected++;
+          const vals = cr.acts.map((a) => (a.value ? safeEval(a.value, c) : undefined));   // all values come from the state before this rule's actions
+          let anyChanged = false, anySkipped = false;
+          const lines = [];
+          const getW = () => { if (!owned.has(i)) { zdos[i] = cloneZdo(z); owned.add(i); } return zdos[i]; };
+          cr.acts.forEach((a, k) => {
+            const res = applyAction(a, vals[k], z, getW, c);
+            if (res.st === 'skip') { anySkipped = true; rr.skipped.set(res.why, (rr.skipped.get(res.why) || 0) + 1); return; }
+            if (res.st === 'changed') { anyChanged = true; lines.push(res.line); rr.flagsAdded += res.flags || 0; }
+          });
+          if (anyChanged) {
+            rr.changed++; changedObjs.add(i);
+            if (rr.samples.length < 8) rr.samples.push({ prefab: stem || hexName(z.prefabHash), x: z.pos.x, z: z.pos.z, lines });
+          } else if (!anySkipped) rr.same++;
+        }
+      }
+      return { zdos, rules: reports, changedObjects: changedObjs.size, ms: Date.now() - t0 };
+    }
+
+    return { run, compileRule, funcs, vars, overrideInfo, fieldType, chainOf, classes };
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // preset rules (the one-click buttons) - ordinary rules, editable like any other
+  // ---------------------------------------------------------------------------------------------------------------
+  const PRESETS = [
+    { id: 'nosupport', label: 'Pieces: m_noSupportWear = False',
+      rule: { name: 'Pieces: WearNTear.m_noSupportWear = false', enabled: true, prefab: '', component: 'WearNTear', where: '',
+        actions: [{ op: 'set', key: 'WearNTear.m_noSupportWear', type: 'bool', value: 'false' }] } },
+    { id: 'indestructible', label: 'Indestructible: health -1',
+      rule: { name: 'Indestructible pieces: health and WearNTear.m_health -> -1', enabled: true, prefab: '', component: 'WearNTear', where: "key('health') > 1000000",
+        actions: [{ op: 'set', key: 'health', type: 'float', value: '-1' }, { op: 'set', key: 'WearNTear.m_health', type: 'float', value: '-1' }] } },
+    { id: 'levels', label: 'Enemies: level 1, same HP & damage, ★ name',
+      rule: { name: 'Enemies: level -> 1, keep health and damage, tag the name with the old level', enabled: true, prefab: '', component: 'Character', where: 'level > 1 and baseHp() != null',
+        // The game recomputes max_health = m_health x level on load whenever an enemy is at full health, so the max_health key would be
+        // overwritten with the level-1 value.  The m_health override is what survives: it is multiplied by the former level.
+        // The health / max_health keys are never touched, so a health value above max_health (tankier Creator-event enemies) is never reduced.
+        actions: [{ op: 'set', key: '@Character.m_health', type: 'float', value: 'baseHp() * level' },
+          { op: 'set', key: 'RandomSkillFactor', type: 'float', value: "coalesce(key('RandomSkillFactor'), 1) * levelDmg(level)" },
+          { op: 'set', key: '@Character.m_name', type: 'string', value: "iif(mName() == null, null, '<size=120%><#fd4>' + level + '★</color></size> ' + mName())" },
+          { op: 'set', key: 'level', type: 'int', value: '1' }] } },
+  ];
+
+  const normRule = (r) => ({
+    name: String((r && r.name) || 'rule'), enabled: !(r && r.enabled === false), prefab: String((r && r.prefab) || ''), component: String((r && r.component) || ''),
+    where: String((r && r.where) || ''),
+    actions: ((r && r.actions) || []).map((a) => ({ op: String((a && a.op) || 'set'), key: String((a && a.key) || ''), type: String((a && a.type) || ''), value: String(a && a.value != null ? a.value : '') })),
+  });
+  const rulesToJson = (rules) => JSON.stringify({ bfcRules: 1, rules }, null, 1);
+  function rulesFromJson(text) {
+    const o = JSON.parse(text);
+    const list = Array.isArray(o) ? o : o && Array.isArray(o.rules) ? o.rules : null;
+    if (!list) throw new Error('expected a list of rules or {"rules": [...]}');
+    return list.map(normRule);
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // UI
+  // ---------------------------------------------------------------------------------------------------------------
+  const S = { deps: null, engine: null, engineCat: null, rules: [], undo: [], msg: '', json: null, cache: null, cacheKey: '', applied: null };
+  const ids = new WeakMap();
+  let nextId = 0;
+  const idOf = (o) => { if (!ids.has(o)) ids.set(o, ++nextId); return ids.get(o); };
+  function init(deps) { S.deps = deps; }
+  function engine() {
+    const cat = S.deps.getCat();
+    if (!S.engine || S.engineCat !== cat) { S.engine = createEngine({ cat, data: S.deps.data }); S.engineCat = cat; S.cache = null; }
+    return S.engine;
+  }
+  function compute(ctx) {
+    if (!ctx.ir || !S.rules.length) return null;
+    const key = idOf(ctx.ir) + '|' + JSON.stringify(S.rules);
+    if (S.cache && S.cacheKey === key) return S.cache;
+    S.cache = engine().run(ctx.ir, S.rules); S.cacheKey = key;
+    return S.cache;
+  }
+
+  const fileKeyCache = new WeakMap();
+  function fileKeys(ir) {
+    let s = fileKeyCache.get(ir);
+    if (!s) {
+      s = new Set();
+      for (const z of ir.zdos) { for (const b of BK) for (const e of z[b]) if (e.name) s.add(e.name); if (s.size > 1500) break; }
+      s = [...s].sort();
+      fileKeyCache.set(ir, s);
+    }
+    return s;
+  }
+  function keySuggestions(ctx, comp) {
+    const out = new Set();
+    const eng = engine();
+    if (comp && eng.classes[comp]) for (const k of eng.chainOf(comp)) {
+      const cl = eng.classes[k];
+      if (!cl) continue;
+      for (const o of cl.o || []) out.add(`${comp}.${o[0]}`);
+      for (const z of cl.z || []) out.add(z[0]);
+    }
+    if (ctx.ir) for (const n of fileKeys(ctx.ir)) out.add(n);
+    return [...out];
+  }
+
+  const STYLE = `<style>
+    .bt-rule{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:10px 0;background:var(--surface2)}
+    .bt-rule.off{opacity:.55}
+    .bt-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .bt-head .grow{flex:1;min-width:180px}
+    .bt-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+    .bt-rule label{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--text2)}
+    .bt-rule input[type=text]{width:100%}
+    .bt-rule .inl{flex-direction:row;align-items:center;gap:6px}
+    .bt-acts{width:100%;border-collapse:collapse;margin-top:6px;font-size:12.5px}
+    .bt-acts td{padding:2px 4px;vertical-align:middle}
+    .bt-res{font-size:12px;color:var(--text2);margin-top:6px}
+    .bt-err{color:var(--err);font-size:12px;margin-top:4px}
+    .bt-presets{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+    @media (max-width:700px){.bt-grid{grid-template-columns:1fr}}
+  </style>`;
+  const HELP = `<details><summary>Expression reference</summary><div class="list">Values and conditions are expressions. true = 1, false = 0, text in 'quotes', and / or / not or && || !
+key('name')       value of a ZDO key or component field, e.g. key('health'), key('WearNTear.m_health'); empty if absent
+has('name')       1 if the key exists            comp('Class')   1 if the prefab has that component (base classes count)
+prefab, level, x, y, z, creator                  level is the 'level' key, or 1
+hp()      health, else max_health, else prefab m_health x level (same rule as the Enemies tab)
+poolHp()  the larger of health / max_health (else prefab m_health x level) - the enemy's full health pool
+baseHp()  prefab m_health (override key first, then the extracted prefab default)
+mName()   display name: the m_name override if there is one, else the English prefab name
+@Class.field   e.g. '@Character.m_health' in a key box or key(): the field on whichever concrete class of the prefab derives from Class (Humanoid, Character...)
+levelDmg(L)  damage multiplier of level L (1 + 0.5 x (L - 1))
+min max abs round floor ceil sqrt pow clamp(v, lo, hi)   iif(test, a, b)   coalesce(a, b, ...)   num(v)
+glob(text, 'wood_*')  contains(text, 'x')  startsWith  endsWith  lower   dist(x, z) = distance on the XZ plane   vec(x,y,z)  quat(x,y,z,w)
+Examples:  key('health') > 1000000 and comp('WearNTear')      level >= 3 and glob(prefab, 'Troll*')      key('RandomSkillFactor') * 0.5
+Prefab box: comma separated globs, ! excludes (wood_*, !wood_floor*).  Component box: a class on the prefab, e.g. WearNTear, Container, Character (matches Humanoid prefabs).
+Setting a Class.field key also sets the HasFields / HasFields&lt;Class&gt; switches, and is skipped on prefabs that lack that component (the game would ignore it).
+Keys with no known type need a type in the action. Rules run in order; each rule sees the result of the one before. Nothing changes in the loaded file until Apply.</div></details>`;
+
+  function html() { return STYLE + '<div id="bt-root"></div>'; }
+
+  function draw(ctx) {
+    const rootEl = document.getElementById('bt-root');
+    if (!rootEl) return;
+    const esc = S.deps.esc;
+    const eng = engine();
+    const res = compute(ctx);
+    const num = (n) => Number(n).toLocaleString();
+    const compNames = Object.keys(eng.classes).sort();
+    const topUndo = S.undo.length ? S.undo[S.undo.length - 1] : null;
+    const canUndo = topUndo && ctx.ir === topUndo.now;
+
+    const ruleHtml = S.rules.map((r, i) => {
+      const rr = res && res.rules[i];
+      let stat = '';
+      if (rr && rr.enabled && !rr.errors.length) {
+        const skipped = [...rr.skipped.values()].reduce((s, n) => s + n, 0);
+        stat = `<div class="bt-res">${num(rr.matched)} matched · ${num(rr.selected)} selected · <b class="${rr.changed ? 'good' : ''}">${num(rr.changed)} would change</b> · ${num(rr.same)} already set${skipped ? ` · <span class="warn">${num(skipped)} skipped</span>` : ''}${rr.unknownPrefab ? ` · <span class="dim">${num(rr.unknownPrefab)} with unresolved prefab (component unknown)</span>` : ''}${rr.flagsAdded ? ` · ${num(rr.flagsAdded)} HasFields switch(es) added` : ''}</div>`;
+        if (rr.skipped.size) stat += `<details><summary>why skipped</summary><div class="list">${[...rr.skipped].map(([w, n]) => `${n}\t${esc(w)}`).join('\n')}</div></details>`;
+        if (rr.samples.length) stat += `<details><summary>sample changes</summary><div class="list">${rr.samples.map((s) => `${esc(s.prefab)} @ ${Math.round(s.x)}, ${Math.round(s.z)}\n   ${s.lines.map(esc).join('\n   ')}`).join('\n')}</div></details>`;
+      } else if (rr && rr.errors.length) stat = rr.errors.map((e) => `<div class="bt-err">${esc(e)}</div>`).join('');
+      const dl = `<datalist id="bt-k-${i}">${keySuggestions(ctx, r.component).map((k) => `<option value="${esc(k)}">`).join('')}</datalist>`;
+      const acts = r.actions.map((a, k) => `<tr data-a="${k}">
+        <td style="width:104px"><select data-f="op">${OPS.map((o) => `<option ${o === a.op ? 'selected' : ''}>${o}</option>`).join('')}</select></td>
+        <td><input type="text" list="bt-k-${i}" data-f="key" value="${esc(a.key)}" placeholder="health  or  WearNTear.m_health"></td>
+        <td style="width:84px"><select data-f="type">${TYPES.map((t) => `<option value="${t}" ${t === a.type ? 'selected' : ''}>${t || 'auto'}</option>`).join('')}</select></td>
+        <td><input type="text" data-f="value" value="${esc(a.value)}" placeholder="${a.op === 'remove' ? '(not used)' : '-1   or   key(\'health\') * 2'}" ${a.op === 'remove' ? 'disabled' : ''}></td>
+        <td style="width:30px"><button class="btn btn-sm" data-act="adel" title="remove action">×</button></td></tr>`).join('');
+      return `<div class="bt-rule ${r.enabled ? '' : 'off'}" data-r="${i}">
+        <div class="bt-head"><label class="inl"><input type="checkbox" data-f="enabled" ${r.enabled ? 'checked' : ''}> on</label>
+          <input type="text" class="grow" data-f="name" value="${esc(r.name)}">
+          <button class="btn btn-sm" data-act="up" title="run earlier">↑</button><button class="btn btn-sm" data-act="down" title="run later">↓</button><button class="btn btn-sm" data-act="del">remove rule</button></div>
+        <div class="bt-grid">
+          <label>Prefab(s) <input type="text" data-f="prefab" value="${esc(r.prefab)}" placeholder="every prefab  (or wood_*, !wood_floor*)"></label>
+          <label>Has component <input type="text" list="bt-comps" data-f="component" value="${esc(r.component)}" placeholder="any  (e.g. WearNTear, Container, Character)"></label>
+        </div>
+        <label>Only when (expression) <input type="text" data-f="where" value="${esc(r.where)}" placeholder="always  (e.g. key('health') > 1000000)"></label>
+        <table class="bt-acts">${acts}</table>${dl}
+        <button class="btn btn-sm" data-act="aadd">+ action</button>${stat}</div>`;
+    }).join('');
+
+    let bar = '';
+    if (res) {
+      const nErr = res.rules.filter((r) => r.errors.length).length;
+      bar = `<div class="status ${res.changedObjects ? 'info' : 'ok'}">Preview: <b>${num(res.changedObjects)}</b> of ${num(ctx.ir.zdos.length)} object(s) would change${nErr ? ` · <span class="warn">${nErr} rule(s) have errors and are skipped</span>` : ''} <span class="dim">(${res.ms} ms)</span></div>`;
+    }
+    rootEl.innerHTML = `
+      <div class="kv"><b>Batch edit</b> — conditional bulk edits of ZDO keys and component fields on the loaded file. Presets add an ordinary rule you can change.</div>
+      ${ctx.ir ? '' : '<div class="status warn">Load a file first.</div>'}
+      <div class="bt-presets">${PRESETS.map((p) => `<button class="btn btn-sm" data-preset="${p.id}">+ ${esc(p.label)}</button>`).join('')}</div>
+      <div class="tools">
+        <button class="btn btn-sm" data-act="radd">+ Empty rule</button>
+        <button class="btn btn-sm" data-act="json">${S.json == null ? 'Rules as JSON…' : 'Hide JSON'}</button>
+        <button class="btn btn-sm" data-act="save">Download rules</button>
+        <button class="btn btn-sm" data-act="load">Load rules…</button><input type="file" id="bt-file" accept=".json,application/json" style="display:none">
+      </div>
+      ${S.json != null ? `<textarea id="bt-json" style="width:100%;height:220px;font-family:var(--mono);font-size:12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px">${esc(S.json)}</textarea>
+        <div class="tools"><button class="btn btn-sm" data-act="jsonapply">Use this JSON</button></div>` : ''}
+      ${S.msg ? `<div class="status info">${esc(S.msg)}</div>` : ''}
+      <datalist id="bt-comps">${compNames.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+      ${ruleHtml || '<p class="dim">No rules yet. Add a preset above or start with an empty rule.</p>'}
+      ${bar}
+      <div class="tools">
+        <button class="btn btn-primary" data-act="apply" ${res && res.changedObjects ? '' : 'disabled'}>Apply to loaded file</button>
+        <button class="btn btn-sm" data-act="undo" ${canUndo ? '' : 'disabled'}>Undo last apply</button>
+        <button class="btn btn-sm" data-act="log" ${res ? '' : 'disabled'}>Download rules + change report</button>
+      </div>
+      ${HELP}`;
+    wireDraw(ctx, rootEl);
+  }
+
+  function logText(ctx, res) {
+    return JSON.stringify({
+      tool: 'Build File Converter v5 - batch edit', file: ctx.name || '', when: new Date().toISOString(), objects: ctx.ir ? ctx.ir.zdos.length : 0,
+      changedObjects: res ? res.changedObjects : 0, rules: S.rules,
+      report: res ? res.rules.map((r) => ({ name: r.name, enabled: r.enabled, errors: r.errors, matched: r.matched, selected: r.selected, changed: r.changed, alreadySet: r.same, skipped: Object.fromEntries(r.skipped), samples: r.samples })) : [],
+    }, (k, v) => (typeof v === 'bigint' ? v.toString() : v), 1);
+  }
+
+  function apply(ctx) {
+    const res = compute(ctx);
+    if (!res || !res.changedObjects || !ctx.setIR) return;
+    const old = ctx.ir;
+    const lines = res.rules.filter((r) => r.changed).map((r) => `Batch edit "${r.name}": ${r.changed} object(s) changed`);
+    const ir2 = Object.assign({}, old, { zdos: res.zdos, reports: Object.assign({}, old.reports, { warnings: old.reports.warnings.concat(lines) }) });
+    S.undo.push({ old, now: ir2 });
+    S.msg = `Applied: ${res.changedObjects.toLocaleString()} object(s) changed. Use Convert & Download to export, and "Download rules + change report" to keep a record.`;
+    S.cache = null;
+    ctx.setIR(ir2);
+  }
+
+  function wireDraw(ctx, rootEl) {
+    const ta = document.getElementById('bt-json');
+    if (ta) ta.addEventListener('input', () => { S.json = ta.value; });   // keeps a JSON edit when other controls redraw
+    if (rootEl.dataset.wired) return;                                      // the container survives redraws: attach the delegates once
+    rootEl.dataset.wired = '1';
+    const rerender = () => draw(ctx);
+    const ruleAt = (el) => { const r = el.closest('.bt-rule'); return r ? S.rules[+r.dataset.r] : null; };
+    rootEl.addEventListener('change', (ev) => {
+      const t = ev.target;
+      if (t.id === 'bt-file') {
+        const f = t.files[0];
+        if (!f) return;
+        f.text().then((txt) => { try { S.rules = rulesFromJson(txt); S.msg = `Loaded ${S.rules.length} rule(s) from ${f.name}.`; } catch (e) { S.msg = 'Could not load rules: ' + e.message; } S.json = null; rerender(); });
+        return;
+      }
+      const field = t.dataset && t.dataset.f;
+      const rule = ruleAt(t);
+      if (!field || !rule) return;
+      S.msg = '';
+      const tr = t.closest('tr[data-a]');
+      if (tr) {
+        const a = rule.actions[+tr.dataset.a];
+        a[field] = t.value;
+        if (field === 'op' && t.value === 'remove') a.value = '';
+      } else rule[field] = field === 'enabled' ? t.checked : t.value;
+      rerender();
+    });
+    rootEl.addEventListener('click', (ev) => {
+      const pre = ev.target.closest('[data-preset]');
+      if (pre) { const p = PRESETS.find((x) => x.id === pre.dataset.preset); S.rules.push(normRule(JSON.parse(JSON.stringify(p.rule)))); S.msg = ''; rerender(); return; }
+      const b = ev.target.closest('[data-act]');
+      if (!b) return;
+      const act = b.dataset.act;
+      const rule = ruleAt(b);
+      const ri = rule ? S.rules.indexOf(rule) : -1;
+      S.msg = '';
+      if (act === 'radd') S.rules.push(normRule({ name: 'New rule', actions: [{ op: 'set', key: '', type: '', value: '' }] }));
+      else if (act === 'del' && rule) S.rules.splice(ri, 1);
+      else if (act === 'up' && rule && ri > 0) S.rules.splice(ri - 1, 0, S.rules.splice(ri, 1)[0]);
+      else if (act === 'down' && rule && ri < S.rules.length - 1) S.rules.splice(ri + 1, 0, S.rules.splice(ri, 1)[0]);
+      else if (act === 'aadd' && rule) rule.actions.push({ op: 'set', key: '', type: '', value: '' });
+      else if (act === 'adel' && rule) { const tr = b.closest('tr[data-a]'); rule.actions.splice(+tr.dataset.a, 1); }
+      else if (act === 'json') S.json = S.json == null ? rulesToJson(S.rules) : null;
+      else if (act === 'jsonapply') { try { S.rules = rulesFromJson(document.getElementById('bt-json').value); S.json = null; S.msg = `Loaded ${S.rules.length} rule(s).`; } catch (e) { S.msg = 'Invalid JSON: ' + e.message; } }
+      else if (act === 'save') { S.deps.download('batch-rules.json', rulesToJson(S.rules), 'application/json'); return; }
+      else if (act === 'load') { document.getElementById('bt-file').click(); return; }
+      else if (act === 'log') { S.deps.download(`${(ctx.name || 'file').replace(/[^\w\- ()\[\]]+/g, '_')}.batch-edit-log.json`, logText(ctx, compute(ctx)), 'application/json'); return; }
+      else if (act === 'apply') { apply(ctx); return; }
+      else if (act === 'undo') { const top = S.undo[S.undo.length - 1]; if (top && ctx.ir === top.now) { S.undo.pop(); S.msg = 'Undone.'; S.cache = null; ctx.setIR(top.old); } return; }
+      rerender();
+    });
+  }
+
+  function wire(ctx) { draw(ctx); }
+
+  const api = { init, html, wire, createEngine, compileExpr, PRESETS, state: S, rulesFromJson, rulesToJson };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  if (root) root.BFBatch = api;
+})(typeof window !== 'undefined' ? window : null);
+
+</script>
 
 <script>
 'use strict';
-/* global BFC, BFCat, BFChunks, BFItems, BFCreators, BFEnemies */
+/* global BFC, BFCat, BFChunks, BFItems, BFCreators, BFEnemies, BFBatch */
 // ============================================================================
 // Valheim Build File Converter v3 — app layer (UI + wiring).
 //   codecs (window.BFC)  : v2 format codecs, unchanged
@@ -2964,7 +3712,8 @@ const num = (n) => n.toLocaleString();
 let cat = null;
 const resolve = (h) => (cat ? cat.resolve(h) : null);
 const nameToHash = (k) => (cat ? cat.nameToHash(k) : BFC.getStableHashCode(k));
-const creatorsCtx = () => ({ ir: state.ir, name: (state.ir && state.ir.meta && state.ir.meta.name) || state.baseName, rerender: () => renderInspector() });
+const creatorsCtx = () => ({ ir: state.ir, name: (state.ir && state.ir.meta && state.ir.meta.name) || state.baseName, rerender: () => renderInspector(),
+  setIR: (ir) => { state.ir = ir; refresh(); } });
 
 const state = {
   ir: null, baseName: 'build', sourceFmt: null, target: 'ih', tab: 'overview',
@@ -2980,12 +3729,12 @@ const DROPS = [
   ['foreign', "Overrides for components the prefab doesn't have (plus their HasFields flags)"],
 ];
 const TARGETS = [
-  { id: 'rewind', title: '.rewind', desc: 'Binary snapshot for the Rewind mod.',
-    fid: 'Full fidelity: every ZDO variable, flag and container survives.', dropsDefault: false },
-  { id: 'ih', title: '.blueprint — Infinity Hammer extended', desc: 'Text blueprint with per-piece ZDO data blocks. hammer_restore rebuilds at the exact original world position.',
-    fid: 'Near-lossless: all ZDO variables, persistent/distant/priority preserved in base64 data blocks.', dropsDefault: true },
-  { id: 'csv', title: 'CSV bundle', desc: 'meta / zdos / items spreadsheets — edit in Excel, drop back here to rebuild. Field columns use catalog names (Class.field).',
-    fid: 'Full fidelity: longs precision-safe.', dropsDefault: true },
+  { id: 'rewind', title: 'Rewind', desc: 'Rewind mod snapshot (no file extension).',
+    fid: '', dropsDefault: false },
+  { id: 'ih', title: '.blueprint (Infinity Hammer)', desc: 'Blueprint with ZDO data blocks.',
+    fid: '', dropsDefault: true },
+  { id: 'csv', title: 'CSV bundle', desc: 'meta / zdos / items spreadsheets.',
+    fid: '', dropsDefault: true },
 ];
 
 // ------------------------------ catalog -------------------------------------
@@ -3307,14 +4056,14 @@ function renderInspector() {
   const ir = state.ir, S = state.stats, el = $('inspector');
   const m = ir.meta;
   const flavor = m.blueprintFlavor ? `<span class="badge flavor">${esc(m.blueprintFlavor)}</span>` : '';
-  const tabs = [['overview', 'Overview'], ['creators', 'Creators'], ['enemies', 'Enemies'], ['fields', 'Fields'], ['unknown', `Unknown (${S.unknown.length})`]];
+  const tabs = [['overview', 'Overview'], ['creators', 'Loot'], ['enemies', 'Enemies'], ['batch', 'Batch edit'], ['fields', 'Fields'], ['unknown', `Unknown (${S.unknown.length})`]];
   let body = '';
-  if (state.tab === 'overview') body = overviewHtml(); else if (state.tab === 'fields') body = fieldsHtml(); else if (state.tab === 'creators') body = BFCreators.html(creatorsCtx()); else if (state.tab === 'enemies') body = BFEnemies.html(creatorsCtx()); else body = unknownHtml();
+  if (state.tab === 'overview') body = overviewHtml(); else if (state.tab === 'fields') body = fieldsHtml(); else if (state.tab === 'creators') body = BFCreators.html(creatorsCtx()); else if (state.tab === 'enemies') body = BFEnemies.html(creatorsCtx()); else if (state.tab === 'batch') body = BFBatch.html(creatorsCtx()); else body = unknownHtml();
   el.innerHTML = `
     <h2><span class="badge">${esc(state.sourceFmt)}</span>${flavor}${esc(m.name ?? state.baseName)}</h2>
     <div class="tabs">${tabs.map(([k, l]) => `<button class="tab ${k === state.tab ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>${body}`;
   el.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { state.tab = b.dataset.tab; renderInspector(); }));
-  if (state.tab === 'fields') wireFields(); else if (state.tab === 'unknown') wireUnknown(); else if (state.tab === 'creators') BFCreators.wire(creatorsCtx()); else if (state.tab === 'enemies') BFEnemies.wire(creatorsCtx());
+  if (state.tab === 'fields') wireFields(); else if (state.tab === 'unknown') wireUnknown(); else if (state.tab === 'creators') BFCreators.wire(creatorsCtx()); else if (state.tab === 'enemies') BFEnemies.wire(creatorsCtx()); else if (state.tab === 'batch') BFBatch.wire(creatorsCtx());
 }
 function overviewHtml() {
   const ir = state.ir, S = state.stats, m = ir.meta, zs = ir.zdos;
@@ -3437,7 +4186,7 @@ function renderTargets() {
 }
 function renderOpts() {
   const el = $('opts'), t = state.target;
-  let html = `<label>Name <input type="text" id="opt-name" placeholder="${esc(state.ir.meta.name ?? state.baseName)}"></label>`;
+  let html = '';
   if (t === 'ih') html += `<label>Creator <input type="text" id="opt-creator" placeholder="${esc(state.ir.meta.creator ?? '')}"></label>
     <label><input type="checkbox" id="opt-data" checked> Include ZDO data blocks (health, containers, fields…)</label>`;
   el.innerHTML = html;
@@ -3490,14 +4239,14 @@ function convert() {
   const emit = 'emit';
   try {
     if (t === 'rewind') {
-      if (ir.snapPoints.length) ir.reports.warnings.push(`${ir.snapPoints.length} snap point(s) are not representable in .rewind — dropped`);
+      if (ir.snapPoints.length) ir.reports.warnings.push(`${ir.snapPoints.length} snap point(s) are not representable in a Rewind — dropped`);
       const buf = BFC.rewindCodec.serialize(ir);
       const check = BFC.rewindCodec.parse(buf);
       if (check.zdos.length !== ir.zdos.length) throw new Error('self-check: ZDO count mismatch after reparse');
       const a = new Uint8Array(buf), b = new Uint8Array(BFC.rewindCodec.serialize(check));
       if (a.length !== b.length) throw new Error('self-check: output not byte-stable');
-      download(`${safe}.rewind`, buf, 'application/octet-stream');
-      status.innerHTML = `<div class="status ok">✅ ${num(ir.zdos.length)} ZDOs → <b>${esc(safe)}.rewind</b> (${num(buf.byteLength)} bytes). Self-check passed.${dropped ? ` Removed: ${esc(dropped)}.` : ''}</div>`;
+      download(safe, buf, 'application/octet-stream');
+      status.innerHTML = `<div class="status ok">✅ ${num(ir.zdos.length)} ZDOs → <b>${esc(safe)}</b> (${num(buf.byteLength)} bytes). Self-check passed.${dropped ? ` Removed: ${esc(dropped)}.` : ''}</div>`;
     } else if (t === 'ih') {
       const text = BFC.serializeIHBlueprint(ir, { includeData: opt('opt-data') ? opt('opt-data').checked : true, unresolvedPolicy: emit });
       const check = BFC.parseBlueprintUnified(text, { hashResolver: resolve });
@@ -3534,6 +4283,7 @@ function boot() {
   catch (e) { $('cat-chip').textContent = 'Catalog missing — drop a catalog.json'; $('cat-chip').className = 'chip err'; console.error(e); }
   BFCreators.init({ data: JSON.parse($('loot-data').textContent), getCat: () => cat, BFC, BFItems, resolve, download, esc });
   BFEnemies.init({ data: JSON.parse($('loot-data').textContent), getCat: () => cat, esc, download, getFiles: (c) => BFCreators.files(c) });
+  BFBatch.init({ data: JSON.parse($('loot-data').textContent), getCat: () => cat, esc, download });
   const drop = $('drop'), input = $('file-input'), folder = $('folder-input');
   drop.addEventListener('click', (e) => { if (e.target.id !== 'pick-folder') input.click(); });
   $('pick-folder').addEventListener('click', (e) => { e.stopPropagation(); folder.click(); });
