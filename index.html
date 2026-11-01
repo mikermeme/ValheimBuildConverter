@@ -80,6 +80,8 @@ code { font-family: var(--mono); font-size: 12px; background: var(--surface2); p
 select, input[type=text] { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; }
 input[type=text] { min-width: 90px; }
 input[type=text][size] { min-width: 0; width: auto; }
+input[type=text][size="3"] { width: 50px; }
+input[type=text][size="4"] { width: 58px; }
 .btn { border: none; border-radius: 8px; padding: 9px 18px; font: 600 13.5px/1 inherit; cursor: pointer; }
 .btn-primary { background: var(--accent2); color: #fff; } .btn-primary:hover { background: var(--accent); } .btn-primary:disabled { opacity: .45; cursor: default; }
 .btn-sm { padding: 5px 12px; font-size: 12px; background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
@@ -101,7 +103,7 @@ footer { margin-top: 22px; color: var(--text2); font-size: 12px; border-top: 1px
 
 <div id="drop">
   <div class="big">Drop build files or a world folder here <span style="color:var(--text2)">or click to browse</span></div>
-  <div class="hint">Rewind (no extension) &nbsp;·&nbsp; .blueprint (Infinity Hammer; PlanBuild import only) &nbsp;·&nbsp; .vbuild &nbsp;·&nbsp; CSV bundle &nbsp;·&nbsp; 1.0 world chunks (<code>.chunks</code> + <code>.chunk</code> files)
+  <div class="hint">Rewind &nbsp;·&nbsp; .blueprint (Infinity Hammer; PlanBuild import only) &nbsp;·&nbsp; .vbuild &nbsp;·&nbsp; CSV bundle &nbsp;·&nbsp; 1.0 world chunks (<code>.chunks</code> + <code>.chunk</code> files)
     &nbsp;·&nbsp; <button class="btn btn-sm" id="pick-folder">Open world folder…</button> &nbsp;·&nbsp; a <code>catalog.json</code> or names <code>.json</code> to load newer names</div>
   <input type="file" id="file-input" multiple>
   <input type="file" id="folder-input" webkitdirectory multiple>
@@ -2429,10 +2431,9 @@ BFC.b64encode = b64encode;
         .sort((a, b) => (isTrophy(a[0]) - isTrophy(b[0])) || b[1].gold - a[1].gold || b[1].qty - a[1].qty)
         .map(([item, r]) => `${fmtQty(r.qty)} ${itemName(item)}`);
     }
-    // Tracker row (tab-separated for Google Sheets): U1..U8 | blue mushrooms | liquid | gold containers | gold enemies | gold breakables | special list | raw drops list | origin(s) | Creator Cape tag | crafter tags of all uniques (TMP markup kept)
+    // Tracker row (tab-separated for Google Sheets): blue mushrooms | liquid | gold containers | gold enemies | gold breakables | special list | raw drops list | origin(s) | Creator Cape tag | crafter tags of all uniques (TMP markup kept) | U1..U8
     function excelRow(res) {
       const cells = [];
-      for (let i = 0; i < 8; i++) cells.push(res.uniques[i] ? fmtUnique(res.uniques[i]) : '');
       cells.push(fmtQty(res.blue.total), String(Math.round(res.liquid)));
       cells.push(String(Math.round(res.buckets.container)), String(Math.round(res.buckets.enemy)), String(Math.round(res.buckets.breakable)));
       cells.push(rowCell(specialLines(res).join('\n')));
@@ -2440,6 +2441,7 @@ BFC.b64encode = b64encode;
       cells.push(rowCell(res.origins.filter(Boolean).join('\n')));
       cells.push(res.capes.length ? rowCell(oneLine(res.capes[0].crafterRaw)) : '');
       cells.push(rowCell([...new Set(res.uniques.map((u) => oneLine(u.crafterRaw)).filter(Boolean))].join('\n')));
+      for (let i = 0; i < 8; i++) cells.push(res.uniques[i] ? fmtUnique(res.uniques[i]) : '');   // the 8 Unique columns come last (far right)
       return cells.join('\t');                       // tab-separated: pastes into Google Sheets cells (multi-line cells are quoted)
     }
     const csvCell = (v) => { const s = String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
@@ -2843,14 +2845,14 @@ BFC.b64encode = b64encode;
     const esc = S.deps.esc;
     const res = compute(ctx);
     const controls = `
-      <div class="kv"><b>Enemy difficulty</b> — uses the files ticked on the Loot tab.</div>
+      <div class="kv"><b>Enemy difficulty</b> — uses the files ticked on the Creator Loot tab.</div>
       <div class="tools">
         Link distance <input type="text" id="en-link" size="3" value="${S.linkDist}"> m
         · room radius <input type="text" id="en-room" size="3" value="${S.roomRadius}"> m
         · area-attack efficiency <input type="text" id="en-aoe" size="3" value="${S.aoe}"> %
         · party DPS <input type="text" id="en-dps" size="4" value="${S.partyDps}"> <span class="dim">(0 = no time estimate)</span>
       </div>`;
-    if (!res) return controls + '<p class="dim">Load a file or tick one on the Loot tab.</p>';
+    if (!res) return controls + '<p class="dim">Load a file or tick one on the Creator Loot tab.</p>';
     const t = res.totals;
     const flagCell = (fl) => (fl.length ? `<span class="warn">${esc(fl.join(' · '))}</span>` : '');
     const groupRows = res.groups.map((g) => {
@@ -2979,6 +2981,7 @@ BFC.b64encode = b64encode;
   const OPS = ['set', 'setDefault', 'remove'];
   const KILL_CLASSES = ['Character', 'WearNTear', 'Destructible', 'TreeBase', 'TreeLog', 'MineRock', 'MineRock5'];
   const hexName = (h) => '#0x' + (h >>> 0).toString(16).toUpperCase().padStart(8, '0');
+  const STAR_PREFIX = '<size=120%><#fd4>';      // the yellow star tag put in front of flattened enemies' names
 
   // ---------------------------------------------------------------------------------------------------------------
   // expression language: numbers, 'strings', true/false/null, + - * / %, comparisons, && || ! (and / or / not), a ? b : c,
@@ -3267,6 +3270,12 @@ BFC.b64encode = b64encode;
       hp: (c) => hpNow(c),
       poolhp: (c) => poolHp(c),
       leveldmg: (c, l) => (isNum(l) ? 1 + 0.5 * Math.max(0, l - 1) : NaN),     // Attack.cs ModifyDamage: +50% damage per level above 1
+      stars: (c, m) => (isNum(m) ? Math.round(2 * (m - 1)) : NaN),             // damage multiplier -> star count (the inverse of levelDmg; a level-3 enemy is 2 stars)
+      tagname: (c, name, m) => {                                                // the name with the star tag in front; null (= leave the name alone) when there are no stars or it is already tagged
+        if (typeof name !== 'string' || !isNum(m)) return null;
+        const n = Math.round(2 * (m - 1));
+        return n < 1 || name.startsWith(STAR_PREFIX) ? null : `${STAR_PREFIX}${n}★</color></size> ${name}`;
+      },
     };
 
     // ---- rules
@@ -3339,6 +3348,7 @@ BFC.b64encode = b64encode;
         return { st: 'changed', line: `${a.key}: ${before} -> (removed)` };
       }
       if (val && val.__err) return { st: 'skip', why: `${a.key}: ${val.__err}` };
+      if (val == null) return { st: 'same' };                    // a value that comes out empty (iif(test, null, ...), tagName() with nothing to tag) leaves the key alone
       const ex = findEntry(z, h);
       const ct = catalogType(a.key, c.info);
       let type = a.type || null;
@@ -3429,9 +3439,11 @@ BFC.b64encode = b64encode;
   // preset rules (the one-click buttons) - ordinary rules, editable like any other
   // ---------------------------------------------------------------------------------------------------------------
   const PRESETS = [
-    { id: 'nosupport', label: 'Pieces: m_noSupportWear = False',
-      rule: { name: 'Pieces: WearNTear.m_noSupportWear = false', enabled: true, prefab: '', component: 'WearNTear', where: '',
-        actions: [{ op: 'set', key: 'WearNTear.m_noSupportWear', type: 'bool', value: 'false' }] } },
+    { id: 'nosupport', label: 'Pieces: support wear, burnable, ash immunity = False',
+      rule: { name: 'Pieces: WearNTear m_noSupportWear, m_burnable, m_ashDamageImmune = false', enabled: true, prefab: '', component: 'WearNTear', where: '',
+        actions: [{ op: 'set', key: 'WearNTear.m_noSupportWear', type: 'bool', value: 'false' },
+          { op: 'set', key: 'WearNTear.m_burnable', type: 'bool', value: 'false' },
+          { op: 'set', key: 'WearNTear.m_ashDamageImmune', type: 'bool', value: 'false' }] } },
     { id: 'indestructible', label: 'Indestructible: health -1',
       rule: { name: 'Indestructible pieces: health and WearNTear.m_health -> -1', enabled: true, prefab: '', component: 'WearNTear', where: "key('health') > 1000000",
         actions: [{ op: 'set', key: 'health', type: 'float', value: '-1' }, { op: 'set', key: 'WearNTear.m_health', type: 'float', value: '-1' }] } },
@@ -3442,8 +3454,12 @@ BFC.b64encode = b64encode;
         // The health / max_health keys are never touched, so a health value above max_health (tankier Creator-event enemies) is never reduced.
         actions: [{ op: 'set', key: '@Character.m_health', type: 'float', value: 'baseHp() * level' },
           { op: 'set', key: 'RandomSkillFactor', type: 'float', value: "coalesce(key('RandomSkillFactor'), 1) * levelDmg(level)" },
-          { op: 'set', key: '@Character.m_name', type: 'string', value: "iif(mName() == null, null, '<size=120%><#fd4>' + level + '★</color></size> ' + mName())" },
+          // the star count comes from the new damage factor (2 x (factor - 1), what the enemy will hit like), and a name that already has the tag is left alone
+          { op: 'set', key: '@Character.m_name', type: 'string', value: "tagName(mName(), coalesce(key('RandomSkillFactor'), 1) * levelDmg(level))" },
           { op: 'set', key: 'level', type: 'int', value: '1' }] } },
+    { id: 'startag', label: 'Enemies: ★ name tag from damage',
+      rule: { name: 'Enemies: add a ★ name tag from RandomSkillFactor (2 x (factor - 1) stars)', enabled: true, prefab: '', component: 'Character', where: "key('RandomSkillFactor') > 1",
+        actions: [{ op: 'set', key: '@Character.m_name', type: 'string', value: "tagName(mName(), key('RandomSkillFactor'))" }] } },
   ];
 
   const normRule = (r) => ({
@@ -3518,8 +3534,54 @@ BFC.b64encode = b64encode;
     .bt-res{font-size:12px;color:var(--text2);margin-top:6px}
     .bt-err{color:var(--err);font-size:12px;margin-top:4px}
     .bt-presets{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+    .bt-guide{font-size:12.5px;line-height:1.5;margin-top:10px;color:var(--text)}
+    .bt-guide h4{margin:14px 0 4px;font-size:13px}
+    .bt-guide p,.bt-guide ul,.bt-guide ol{margin:4px 0}
+    .bt-guide ul,.bt-guide ol{padding-left:20px}
+    .bt-guide code{background:var(--surface);border-radius:4px;padding:0 4px}
     @media (max-width:700px){.bt-grid{grid-template-columns:1fr}}
   </style>`;
+  const GUIDE = `<div class="bt-guide"><h4>Guide for people who don't code</h4>
+<p>A <b>rule</b> says: <i>for these objects, if this is true, change these things.</i> You fill in boxes; nothing here needs programming. Press a preset button to get a finished rule, then change it.</p>
+<h4>The parts of a rule</h4>
+<ul>
+<li><b>on</b> - untick to keep the rule but skip it.</li>
+<li><b>Prefab(s)</b> - which kinds of object. Empty means every object. <code>wood_*</code> means every prefab whose name starts with wood_ (the * is a wildcard). Separate several with commas; a ! in front excludes: <code>wood_*, !wood_floor*</code>.</li>
+<li><b>Has component</b> - only objects that have this part: <code>WearNTear</code> (anything that takes damage), <code>Container</code> (chests), <code>Character</code> (creatures). The box suggests names as you type.</li>
+<li><b>Only when</b> - an extra yes/no test. <code>key('health') &gt; 1000000</code> reads "the object's health is over a million". Empty means always.</li>
+<li><b>Actions</b> - what to change. Each one has: what to do (<b>set</b> a value, <b>setDefault</b> sets it only if the object has none yet, <b>remove</b> deletes the key), the <b>key</b>, the <b>type</b> (leave it on auto unless the preview asks for one) and the <b>value</b>.</li>
+</ul>
+<h4>Keys and fields</h4>
+<p>Objects keep their settings under names. A plain name such as <code>health</code> or <code>level</code> is a saved value. A name with a dot, such as <code>WearNTear.m_health</code>, is a <i>field</i> of one of the object's parts (Class.field): it overrides the prefab's built-in setting. The key box suggests names for the component you picked and for names found in your file.</p>
+<h4>Writing values and tests</h4>
+<ul>
+<li>Numbers as usual: <code>-1</code>, <code>2.5</code>, <code>1e6</code>. Yes/no is <code>true</code> or <code>false</code> (really 1 and 0). Text goes in quotes: <code>'Hello'</code>.</li>
+<li>To use what the object has now, write <code>key('name')</code>. <code>key('health') * 2</code> doubles the health.</li>
+<li>Compare with <code>==</code> (equal), <code>!=</code> (not equal), <code>&gt;</code>, <code>&lt;</code>, <code>&gt;=</code>, <code>&lt;=</code>. Combine tests with <code>and</code>, <code>or</code>, <code>not</code>.</li>
+<li>If a key might be missing, give a fallback: <code>coalesce(key('RandomSkillFactor'), 1)</code> means "its value, or 1 if it has none". Without a fallback a missing key makes the action skip.</li>
+</ul>
+<h4>A safe way to work</h4>
+<ol>
+<li>Load your file, then add a rule.</li>
+<li>Read the line under the rule: <i>matched</i> (right prefab and component), <i>selected</i> (passed your Only-when test), <i>would change</i>, <i>already set</i> (nothing to do). Open <i>sample changes</i> to see real before -&gt; after values, and <i>why skipped</i> if anything was skipped.</li>
+<li>Nothing changes in your file until you press <b>Apply</b>. <b>Undo last apply</b> takes it back. <b>Download rules + change report</b> keeps a record. Rules run from top to bottom and each one sees the result of the rules above it, so order matters.</li>
+</ol>
+<h4>Recipes</h4>
+<ul>
+<li>Turn a setting off on every piece: Has component <code>WearNTear</code>; set key <code>WearNTear.m_burnable</code> to <code>false</code>.</li>
+<li>Only some pieces: put <code>wood_*, !wood_floor*</code> in Prefab(s).</li>
+<li>Halve enemy damage: Has component <code>Character</code>; set <code>RandomSkillFactor</code> to <code>coalesce(key('RandomSkillFactor'), 1) * 0.5</code>.</li>
+<li>Only things near a spot: Only when <code>dist(4640, -6810) &lt; 30</code> means within 30 m of X 4640, Z -6810.</li>
+<li>Fill in a value only where there is none yet: use <b>setDefault</b> instead of set.</li>
+<li>Delete a leftover key: action <b>remove</b>, key <code>MyKey</code>.</li>
+</ul>
+<h4>If something is skipped</h4>
+<ul>
+<li><i>unknown key type - pick a type</i>: the tool does not know that key. Choose bool, int, float or string in the type box.</li>
+<li><i>prefab has no X component</i>: the game would ignore that field on that prefab. Narrow the rule with Has component.</li>
+<li><i>value is not a number</i>: part of your value was empty. Use <code>coalesce(...)</code> with a fallback.</li>
+<li><i>unknown name</i>, <i>unknown function</i> or <i>expected ...</i>: a typo. Check spelling, brackets and that text is in quotes.</li>
+</ul></div>`;
   const HELP = `<details><summary>Expression reference</summary><div class="list">Values and conditions are expressions. true = 1, false = 0, text in 'quotes', and / or / not or && || !
 key('name')       value of a ZDO key or component field, e.g. key('health'), key('WearNTear.m_health'); empty if absent
 has('name')       1 if the key exists            comp('Class')   1 if the prefab has that component (base classes count)
@@ -3530,12 +3592,15 @@ baseHp()  prefab m_health (override key first, then the extracted prefab default
 mName()   display name: the m_name override if there is one, else the English prefab name
 @Class.field   e.g. '@Character.m_health' in a key box or key(): the field on whichever concrete class of the prefab derives from Class (Humanoid, Character...)
 levelDmg(L)  damage multiplier of level L (1 + 0.5 x (L - 1))
+stars(m)  star count for a damage multiplier m: 2 x (m - 1)   (a level-3 enemy is 2 stars)
+tagName(name, m)  the name with the yellow star tag in front for damage multiplier m; empty (so the name is left alone) when there are no stars or it is already tagged
 min max abs round floor ceil sqrt pow clamp(v, lo, hi)   iif(test, a, b)   coalesce(a, b, ...)   num(v)
 glob(text, 'wood_*')  contains(text, 'x')  startsWith  endsWith  lower   dist(x, z) = distance on the XZ plane   vec(x,y,z)  quat(x,y,z,w)
-Examples:  key('health') > 1000000 and comp('WearNTear')      level >= 3 and glob(prefab, 'Troll*')      key('RandomSkillFactor') * 0.5
+Examples:  key('health') > 1000000 and comp('WearNTear')      level >= 3 and glob(prefab, 'Troll*')      coalesce(key('RandomSkillFactor'), 1) * 0.5
 Prefab box: comma separated globs, ! excludes (wood_*, !wood_floor*).  Component box: a class on the prefab, e.g. WearNTear, Container, Character (matches Humanoid prefabs).
 Setting a Class.field key also sets the HasFields / HasFields&lt;Class&gt; switches, and is skipped on prefabs that lack that component (the game would ignore it).
-Keys with no known type need a type in the action. Rules run in order; each rule sees the result of the one before. Nothing changes in the loaded file until Apply.</div></details>`;
+Keys with no known type need a type in the action. Rules run in order; each rule sees the result of the one before. Nothing changes in the loaded file until Apply.
+A value that comes out empty (null, for example iif(test, null, ...) or tagName() with nothing to tag) leaves that key unchanged.</div>${GUIDE}</details>`;
 
   function html() { return STYLE + '<div id="bt-root"></div>'; }
 
@@ -3716,7 +3781,7 @@ const creatorsCtx = () => ({ ir: state.ir, name: (state.ir && state.ir.meta && s
   setIR: (ir) => { state.ir = ir; refresh(); } });
 
 const state = {
-  ir: null, baseName: 'build', sourceFmt: null, target: 'ih', tab: 'overview',
+  ir: null, baseName: 'build', sourceFmt: null, target: 'rewind', tab: 'overview',
   world: null, drops: new Set(), dropsTouched: false, plan: null, stats: null,
   filter: { text: '', role: 'all', val: 'all' },
 };
@@ -4056,7 +4121,7 @@ function renderInspector() {
   const ir = state.ir, S = state.stats, el = $('inspector');
   const m = ir.meta;
   const flavor = m.blueprintFlavor ? `<span class="badge flavor">${esc(m.blueprintFlavor)}</span>` : '';
-  const tabs = [['overview', 'Overview'], ['creators', 'Loot'], ['enemies', 'Enemies'], ['batch', 'Batch edit'], ['fields', 'Fields'], ['unknown', `Unknown (${S.unknown.length})`]];
+  const tabs = [['overview', 'Overview'], ['creators', 'Creator Loot'], ['enemies', 'Enemies'], ['batch', 'Batch edit'], ['fields', 'Fields'], ['unknown', `Unknown (${S.unknown.length})`]];
   let body = '';
   if (state.tab === 'overview') body = overviewHtml(); else if (state.tab === 'fields') body = fieldsHtml(); else if (state.tab === 'creators') body = BFCreators.html(creatorsCtx()); else if (state.tab === 'enemies') body = BFEnemies.html(creatorsCtx()); else if (state.tab === 'batch') body = BFBatch.html(creatorsCtx()); else body = unknownHtml();
   el.innerHTML = `
