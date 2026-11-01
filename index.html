@@ -2644,6 +2644,19 @@ BFC.b64encode = b64encode;
     return new Promise((ok) => { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); ok(); });
   }
 
+  // Called once when a file has just been loaded: puts the tracker row on the clipboard as if Copy to Tracker had been pressed.
+  // Browsers may refuse a clipboard write that does not come straight from a click; then the button is still there and a note says so.
+  function autoCopy(ctx) {
+    try {
+      const res = compute(ctx);
+      if (!res) return Promise.resolve(false);
+      const row = engine().excelRow(res);
+      return Promise.resolve(copyText(row)).then(
+        () => { S.msg = 'Loot row copied to the clipboard ✓ (paste it into the tracker)'; ctx.rerender(); return true; },
+        () => { S.msg = 'The browser blocked the automatic copy - press Copy to Tracker.'; ctx.rerender(); return false; });
+    } catch (e) { console.error(e); return Promise.resolve(false); }
+  }
+
   function wire(ctx) {
     const $ = (id) => document.getElementById(id);
     const res = S.cache;
@@ -2663,7 +2676,7 @@ BFC.b64encode = b64encode;
     if (csv && res) csv.onclick = () => S.deps.download(`${(ctx.name || 'event').replace(/[^\w\- ()\[\]]+/g, '_')}.loot.csv`, engine().lootCsv(res, true), 'text/csv');
   }
 
-  const api = { init, html, wire, state: S, files: filesNow };
+  const api = { init, html, wire, state: S, files: filesNow, autoCopy };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.BFCreators = api;
 })(typeof window !== 'undefined' ? window : null);
@@ -3781,7 +3794,7 @@ const creatorsCtx = () => ({ ir: state.ir, name: (state.ir && state.ir.meta && s
   setIR: (ir) => { state.ir = ir; refresh(); } });
 
 const state = {
-  ir: null, baseName: 'build', sourceFmt: null, target: 'rewind', tab: 'overview',
+  ir: null, baseName: 'build', sourceFmt: null, target: 'rewind', tab: 'creators',
   world: null, drops: new Set(), dropsTouched: false, plan: null, stats: null,
   filter: { text: '', role: 'all', val: 'all' },
 };
@@ -3970,6 +3983,7 @@ async function handleFiles(files) {
     } else throw new Error('No recognizable build file among the dropped files.');
     state.world = null; $('world').style.display = 'none';
     setIR(ir, baseName, fmt);
+    BFCreators.autoCopy(creatorsCtx());   // v5: copy the tracker row as if Copy to Tracker had been pressed
   } catch (e) {
     console.error(e);
     status.innerHTML = `<div class="status err"><b>Load failed:</b> ${esc(e.message)}</div>`;
