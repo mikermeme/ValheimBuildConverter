@@ -2226,7 +2226,7 @@ BFC.b64encode = b64encode;
         const own = (bucket, key, plainHash) => (prefix === '' ? val(z, bucket, plainHash) : (val(z, bucket, slotHash(slot, key)) ?? val(z, bucket, plainHash)));
         it = { stack: num(own('ints', 'stack', H.stack), 1) || 1, quality: num(own('ints', 'quality', H.quality), 1) || 1, crafterName: own('strings', 'crafterName', H.crafterName) || '' };
       }
-      return { prefab: name, stack: it.stack || 1, quality: it.quality || 1, crafterName: it.crafterName || '' };
+      return { prefab: name, stack: it.stack || 1, quality: it.quality || 1, crafterName: it.crafterName || '', ref: prefix === '' ? { k: 's' } : { k: 'a', slot } };
     }
 
     const cleanTag = (s) => String(s || '').replace(/<br\s*\/?>/gi, ' ').replace(/<\/?[^>]*>/g, '').replace(/\s+/g, ' ').trim();
@@ -2292,13 +2292,14 @@ BFC.b64encode = b64encode;
           const flags = isFish ? (st.quality >= 4 ? { special: `${item}@L${st.quality}` } : null) : (st.quality >= 2 ? { noRaw: true } : null);
           add(z, 'container', source, item, st.stack, st.quality > 1 ? `L${st.quality}` : '', true, flags);
           if (st.quality >= 2 && !isFish) {
-            const rec = { prefab: item, name: itemName(item), level: st.quality, crafter: cleanTag(st.crafterName), crafterRaw: st.crafterName, where: z.prefabName || hexName(z.prefabHash), x: z.pos.x, y: z.pos.y, z: z.pos.z, file: fileName, slot: source };
+            const rec = { prefab: item, name: itemName(item), level: st.quality, crafter: cleanTag(st.crafterName), crafterRaw: st.crafterName, where: z.prefabName || hexName(z.prefabHash), x: z.pos.x, y: z.pos.y, z: z.pos.z, file: fileName, slot: source, zdo: curZ, ref: st.ref || null, rawPrefab: st.prefab, current: !!f.current };
             if (item === cape.prefab && st.quality === cape.quality) res.capes.push(rec); else res.uniques.push(rec);
           }
         };
 
+        let curZ = -1;                                   // index of the object being read (Uniques remember it so they can be edited)
         for (const z of ir.zdos) {
-          res.counts.zdos++;
+          res.counts.zdos++; curZ++;
           const stem = z.prefabName || nameOfHash(z.prefabHash);
           if (stem && !z.prefabName) z.prefabName = stem;
           const comps = (stem && cat.prefabComponents(stem)) || [];
@@ -2317,7 +2318,7 @@ BFC.b64encode = b64encode;
             res.counts.containers++;
             try {
               const inv = Items.decodeInventory(invBytes || Items.b64dec(invStr), nameOfHash);
-              for (const it of inv.items) addStack(z, 'container', { prefab: it.prefabName || '#?', stack: it.stack, quality: it.quality, crafterName: it.crafterName });
+              inv.items.forEach((it, ii) => addStack(z, 'container', { prefab: it.prefabName || '#?', stack: it.stack, quality: it.quality, crafterName: it.crafterName, ref: { k: 'c', i: ii } }));
             } catch (err) { warn(`Could not decode a container inventory (${stem}): ${err.message}`); }
             }
           } else if (comps.includes('Container') && val(z, 'ints', H.addedDefaultItems) === undefined) {
@@ -2346,7 +2347,7 @@ BFC.b64encode = b64encode;
             const bytes = val(z, 'bytes', H.itemData);
             if (bytes && bytes.length > 2) { try { const it = Items.readCompact(new Items.Rd(bytes.subarray(1)), bytes[0], nameOfHash); stack = it.stack; quality = it.quality; crafterName = it.crafterName; } catch (e) { /* keep defaults */ } }
             else { stack = num(val(z, 'ints', H.stack), 1) || 1; quality = num(val(z, 'ints', H.quality), 1) || 1; crafterName = val(z, 'strings', H.crafterName) || ''; }
-            addStack(z, 'dropped item', { prefab: stem, stack, quality, crafterName });
+            addStack(z, 'dropped item', { prefab: stem, stack, quality, crafterName, ref: { k: 'd' } });
           }
 
           const src = stem ? data.src[stem] : null;
@@ -2454,7 +2455,91 @@ BFC.b64encode = b64encode;
       return lines.join('\r\n') + '\r\n';
     }
 
-    return { analyze, excelRow, lootCsv, fmtUnique, cleanTag, specialLines, rawLines, fmtQty, itemName, specialOf, specialLabel, constants: { HP_MIN, HP_MAX, TIER_MAX }, enemyDrops, killability };
+    // ---- editing Uniques: level (= item quality), item (prefab) and crafter tag, written back to wherever the item lives
+    // edit = { zdo, ref: {k:'c', i} container item | {k:'s'} item stand | {k:'a', slot} armor stand slot | {k:'d'} dropped item,
+    //          expect: {prefab, level} (what the analysis saw, to refuse stale edits), label, level?, prefab?, crafterRaw? }
+    const EQUIP_TYPES = new Set(['OneHandedWeapon', 'TwoHandedWeapon', 'TwoHandedWeaponLeft', 'Bow', 'Shield', 'Helmet', 'Chest', 'Legs', 'Shoulder', 'Trinket', 'Utility', 'Torch', 'Tool']);
+    const itemChoices = () => Object.entries(data.items).filter(([, v]) => EQUIP_TYPES.has(v[1])).map(([k, v]) => [k, v[0]]).sort((a, b) => a[1].localeCompare(b[1]));
+    let itemLookup = null;
+    function resolveItem(text) {                      // prefab name, English display name or #0xHASH -> prefab name (null = unknown item)
+      if (!text) return null;
+      if (/^#0x[0-9a-f]{1,8}$/i.test(text)) return text;
+      if (data.items[text]) return text;
+      if (!itemLookup) {
+        itemLookup = new Map();
+        const all = Object.entries(data.items);
+        for (const [k] of all) itemLookup.set(k.toLowerCase(), k);
+        all.sort((a, b) => EQUIP_TYPES.has(b[1][1]) - EQUIP_TYPES.has(a[1][1]));
+        for (const [k, v] of all) { const n = String(v[0]).toLowerCase(); if (!itemLookup.has(n)) itemLookup.set(n, k); }
+      }
+      return itemLookup.get(text.toLowerCase()) || null;
+    }
+    function applyUniqueEdits(ir, edits) {
+      const failed = [];
+      let applied = 0;
+      const groups = new Map();
+      for (const e of edits) { if (!groups.has(e.zdo)) groups.set(e.zdo, []); groups.get(e.zdo).push(e); }
+      const zdos = ir.zdos.slice();
+      const cloneZ = (z) => { const o = Object.assign({}, z); for (const b of ['floats', 'vec3s', 'quats', 'ints', 'longs', 'strings', 'bytes']) o[b] = z[b].map((x) => Object.assign({}, x)); return o; };
+      const setFields = (it, e) => {
+        if (e.level !== undefined) it.quality = e.level;
+        if (e.prefab !== undefined) { it.prefabName = e.prefab; it.prefabHash = Items.hashOfName(e.prefab); }
+        if (e.crafterRaw !== undefined) { it.crafterName = e.crafterRaw; if (e.crafterRaw && it.crafterID === 0n) it.crafterID = 1n; }   // the game only stores the name next to a non-zero crafter id
+      };
+      const putInt = (z, h, v) => { const x = z.ints.find((q) => q.hash === h); if (x) x.value = v; else z.ints.push({ hash: h, value: v }); };
+      const putStr = (z, h, v) => { const x = z.strings.find((q) => q.hash === h); if (x) x.value = v; else z.strings.push({ hash: h, value: v }); };
+      for (const [zi, list] of groups) {
+        const z0 = ir.zdos[zi];
+        if (!z0) { for (const e of list) failed.push(`${e.label}: object not found`); continue; }
+        const z = cloneZ(z0);
+        let touched = false;
+        const cEdits = list.filter((e) => e.ref && e.ref.k === 'c');
+        if (cEdits.length) {                             // container: decode the inventory once, change the items, write it back (current format, version 110)
+          try {
+            const be = z.bytes.find((x) => x.hash === H.items), se = z.strings.find((x) => x.hash === H.items);
+            const inv = Items.decodeInventory(be ? be.value : Items.b64dec(se.value), nameOfHash);
+            let n = 0;
+            for (const e of cEdits) {
+              const it = inv.items[e.ref.i];
+              if (!it || (it.prefabName || '#?') !== e.expect.prefab || it.quality !== e.expect.level) { failed.push(`${e.label}: the container no longer holds that item`); continue; }
+              setFields(it, e); n++;
+            }
+            if (n) {
+              const enc = Items.encodeInventory110(inv.items);
+              if (be) be.value = enc; else { z.strings = z.strings.filter((x) => x !== se); z.bytes.push({ hash: H.items, name: 'items', value: enc }); }
+              applied += n; touched = true;
+            }
+          } catch (err) { for (const e of cEdits) failed.push(`${e.label}: ${err.message}`); }
+        }
+        for (const e of list.filter((x) => x.ref && x.ref.k !== 'c')) {
+          try {
+            if (e.prefab !== undefined && e.ref.k === 'd') throw new Error('the item of a dropped item is its prefab and cannot be changed here');
+            const slot = e.ref.k === 'a' ? e.ref.slot : null;
+            const kh = (key, plain) => (slot === null ? plain : slotHash(slot, key));
+            const de = z.bytes.find((x) => x.hash === kh('itemData', H.itemData));
+            const hasInt = (h) => z.ints.some((q) => q.hash === h), hasStr = (h) => z.strings.some((q) => q.hash === h);
+            if (de && de.value.length > 2) {                 // one compact record: version byte + ItemData
+              const it = Items.readCompact(new Items.Rd(de.value.subarray(1)), de.value[0], nameOfHash);
+              setFields(it, e);
+              const w = new Items.Wr(); w.byte(110); Items.writeCompact(w, it); de.value = w.bytes();
+            }
+            // the plain keys: kept in step when they exist, created when there is no itemData record
+            if (e.level !== undefined && (!de || hasInt(kh('quality', H.quality)))) putInt(z, kh('quality', H.quality), e.level);
+            if (e.crafterRaw !== undefined && (!de || hasStr(kh('crafterName', H.crafterName)))) putStr(z, kh('crafterName', H.crafterName), e.crafterRaw);
+            if (e.prefab !== undefined) {
+              const ih = kh('item', H.item);
+              const ie = z.ints.find((q) => q.hash === ih), is = z.strings.find((q) => q.hash === ih);
+              if (ie) ie.value = Items.hashOfName(e.prefab); else if (is) is.value = e.prefab; else throw new Error('no item key on the object');
+            }
+            applied++; touched = true;
+          } catch (err) { failed.push(`${e.label}: ${err.message}`); }
+        }
+        if (touched) zdos[zi] = z;
+      }
+      return { ir: applied ? Object.assign({}, ir, { zdos }) : ir, applied, failed };
+    }
+
+    return { analyze, applyUniqueEdits, resolveItem, itemChoices, excelRow, lootCsv, fmtUnique, cleanTag, specialLines, rawLines, fmtQty, itemName, specialOf, specialLabel, constants: { HP_MIN, HP_MAX, TIER_MAX }, enemyDrops, killability };
   }
 
   const api = { createEngine, BUCKETS };
@@ -2499,6 +2584,9 @@ BFC.b64encode = b64encode;
 
   const num = (n, d) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d == null ? 0 : d });
   const gold = (n) => num(n) + ' g';
+
+  // ---- editing Uniques (rows from the loaded file; rows from added files stay read-only). Edits stay pending until applied to the loaded file.
+  const U = { pending: new Map(), pendingIr: null, undo: [], recs: new Map() };
 
   function filesNow(ctx) {
     const files = [];
@@ -2566,8 +2654,26 @@ BFC.b64encode = b64encode;
     const items = [];
     for (const c of res.capes) items.push({ cape: true, ...c });
     for (const u of res.uniques) items.push(u);
-    const uniqueRows = items.map((u) => `<tr><td class="n">L${u.level}</td><td>${esc(u.name)}</td>
+    const uniqueRowsStatic = items.map((u) => `<tr><td class="n">L${u.level}</td><td>${esc(u.name)}</td>
       <td title="${esc(u.crafter)}" style="font-family:'Averia Sans Libre','Averia Sans',sans-serif">${tmpHtml(u.crafterRaw, esc)}</td><td class="dim">${Math.round(u.x)}, ${Math.round(u.z)} · ${esc(u.where)}</td></tr>`).join('');
+    // ---- editable Uniques: rows from the loaded file get input boxes; rows from added files stay read-only
+    const irId = ctx.ir ? idOf(ctx.ir) : 0;
+    if (U.pendingIr !== irId) { U.pending.clear(); U.pendingIr = irId; }
+    U.recs = new Map();
+    const uniqueRows = items.map((u) => {
+      const key = u.current && u.ref ? refKey(u) : null;
+      const coords = `${Math.round(u.x)}, ${Math.round(u.z)} · ${esc(u.where)}`;
+      if (!key) return `<tr><td class="n">L${u.level}</td><td>${esc(u.name)}</td><td title="${esc(u.crafter)}" style="font-family:'Averia Sans Libre','Averia Sans',sans-serif">${tmpHtml(u.crafterRaw, esc)}</td><td class="dim">${coords}</td></tr>`;
+      U.recs.set(key, u);
+      return `<tr data-key="${esc(key)}">${cellHtml(u, 'level')}${cellHtml(u, 'prefab')}${cellHtml(u, 'crafter')}<td class="dim">${coords}</td></tr>`;
+    }).join('');
+    const topUndo = U.undo[U.undo.length - 1];
+    const uniqueBar = `<style>.hist td.cr-c{cursor:text;position:relative}.hist td.cr-c:hover{background:var(--surface2)}.hist td.cr-c.locked{cursor:default}.hist td.cr-c.locked:hover{background:none}
+      .hist td.cr-c.mod{box-shadow:inset 0 -2px 0 var(--warn)}.hist td.cr-c.bad{box-shadow:inset 0 -2px 0 var(--err);color:var(--err)}
+      .hist td.cr-c input.cr-ed{position:absolute;left:0;top:0;width:100%;height:100%;min-width:0;box-sizing:border-box;margin:0;padding:0 6px;border:0;border-radius:0;outline:1px solid var(--warn);background:var(--surface);color:var(--text);font:inherit;line-height:inherit}</style>
+      <datalist id="cr-items">${eng.itemChoices().map(([k, n]) => `<option value="${esc(k)}" label="${esc(n)}">`).join('')}</datalist>
+      <div id="cr-pending" class="status info" style="display:none"><span id="cr-pending-n"></span><button class="btn btn-sm" id="cr-apply">Apply to loaded file</button> <button class="btn btn-sm" id="cr-discard">Discard</button></div>
+      <div class="tools"><span class="dim">Click a level, item or crafter tag in a row from the loaded file to edit it (Enter or click away keeps it, Esc cancels, Tab moves on). Apply puts the edits in the loaded file; Convert applies pending edits too.</span> <button class="btn btn-sm" id="cr-undo" ${topUndo && ctx.ir === topUndo.now ? '' : 'disabled'}>Undo last apply</button></div>`;
     const uniqWarn = [];
     if (res.uniques.length > 8) uniqWarn.push(`${res.uniques.length} Uniques found; the tracker row only has 8 Unique columns.`);
     if (!res.capes.length) uniqWarn.push('No Creator Cape (Linen Cape, level 6) found.');
@@ -2593,7 +2699,7 @@ BFC.b64encode = b64encode;
     return controls + `
       <h3>Uniques <span class="dim">(${res.uniques.length} + Creator Cape)</span></h3>
       ${uniqWarn.map((w) => `<div class="note warn">${esc(w)}</div>`).join('')}
-      <div class="scroll"><table class="hist"><thead><tr><td class="n">level</td><td>item</td><td>crafter tag</td><td>where</td></tr></thead><tbody>${uniqueRows || '<tr><td colspan="4" class="dim">none</td></tr>'}</tbody></table></div>
+      ${uniqueBar}<div class="scroll"><table class="hist"><thead><tr><td class="n">level</td><td>item</td><td>crafter tag</td><td>where</td></tr></thead><tbody>${uniqueRows || '<tr><td colspan="4" class="dim">none</td></tr>'}</tbody></table></div>
 
       <div class="stats">
         <div class="stat"><div class="n" style="color:var(--accent2)">${num(res.blue.total, 1)}</div><div class="l">Blue Mushrooms${res.blue.expected ? ` (${num(res.blue.direct, 1)} direct)` : ''}</div></div>
@@ -2657,6 +2763,72 @@ BFC.b64encode = b64encode;
     } catch (e) { console.error(e); return Promise.resolve(false); }
   }
 
+  const refKey = (u) => (u.ref ? `${u.zdo}:${u.ref.k}${u.ref.k === 'c' ? u.ref.i : u.ref.k === 'a' ? u.ref.slot : ''}` : null);
+  const origText = (u, f) => (f === 'level' ? String(u.level) : f === 'prefab' ? u.prefab : u.crafterRaw);
+  // what the typed texts mean: fields = values that really change, bad = problems (per field)
+  function evalEdit(u, t) {
+    const out = { fields: {}, bad: {} };
+    if (t.level !== undefined) {
+      const s = String(t.level).trim();
+      if (/^\d{1,5}$/.test(s) && +s >= 1 && +s <= 65535) { if (+s !== u.level) out.fields.level = +s; } else out.bad.level = 'level must be a whole number from 1 to 65535';
+    }
+    if (t.prefab !== undefined) {
+      const r = u.ref.k === 'd' ? null : engine().resolveItem(String(t.prefab).trim());
+      if (r) { if (r !== u.prefab) out.fields.prefab = r; } else out.bad.prefab = 'unknown item (type a prefab name or the English item name)';
+    }
+    if (t.crafter !== undefined && t.crafter !== u.crafterRaw) out.fields.crafterRaw = t.crafter;
+    return out;
+  }
+  // ---- click-to-edit cells: what a cell shows (the pending value when there is one) and how an edit is recorded
+  function cellView(u, f) {
+    const esc = S.deps.esc;
+    const p = U.pending.get(refKey(u)), t = p ? p.t : {};
+    const ev = p ? evalEdit(u, t) : { fields: {}, bad: {} };
+    const cls = ev.bad[f] ? 'bad' : f in t ? 'mod' : '';
+    if (f === 'level') return { cls, html: esc('L' + (t.level ?? u.level)), title: ev.bad.level || 'Click to edit the level' };
+    if (f === 'prefab') {
+      const locked = u.ref.k === 'd';
+      const shown = ev.bad.prefab ? esc(t.prefab) + ' ?' : esc(engine().itemName(ev.fields.prefab || u.prefab));
+      return { cls: locked ? 'locked' : cls, html: shown, title: ev.bad.prefab || (locked ? 'The item of a dropped item is its prefab and cannot be changed here' : `Click to edit (${ev.fields.prefab || u.prefab})`) };
+    }
+    return { cls, html: tmpHtml(t.crafter ?? u.crafterRaw, esc), title: 'Click to edit the crafter tag (raw markup)' };
+  }
+  const cellHtml = (u, f) => { const v = cellView(u, f); return `<td class="cr-c${f === 'level' ? ' n' : ''}${v.cls ? ' ' + v.cls : ''}" data-f="${f}" title="${S.deps.esc(v.title)}"${f === 'crafter' ? ` style="font-family:'Averia Sans Libre','Averia Sans',sans-serif"` : ''}>${v.html}</td>`; };
+  function paintCell(td, u, f) { const v = cellView(u, f); td.className = `cr-c${f === 'level' ? ' n' : ''}${v.cls ? ' ' + v.cls : ''}`; td.title = v.title; td.innerHTML = v.html; }
+  function commitEdit(u, f, value) {
+    const key = refKey(u);
+    let p = U.pending.get(key);
+    if (!p) { p = { u, t: {} }; U.pending.set(key, p); }
+    if (value === origText(u, f)) delete p.t[f]; else p.t[f] = value;
+    if (!Object.keys(p.t).length) U.pending.delete(key);
+  }
+  function pendingCounts() {
+    let n = 0, bad = 0;
+    for (const p of U.pending.values()) { const ev = evalEdit(p.u, p.t); if (Object.keys(ev.bad).length) bad++; else if (Object.keys(ev.fields).length) n++; }
+    return { n, bad };
+  }
+  // Bake the pending Unique edits into the loaded file (new IR object, so every tab refreshes). Returns { ok, msg }; Convert calls this first.
+  function applyPending(ctx) {
+    if (!U.pending.size || !ctx.ir || !ctx.setIR) return { ok: true };
+    const edits = [];
+    for (const p of U.pending.values()) {
+      const ev = evalEdit(p.u, p.t);
+      if (Object.keys(ev.bad).length) return { ok: false, msg: 'Fix the Unique edits marked in red on the Creator Loot tab (or discard them) first.' };
+      if (!Object.keys(ev.fields).length) continue;
+      edits.push(Object.assign({ zdo: p.u.zdo, ref: p.u.ref, expect: { prefab: p.u.rawPrefab, level: p.u.level }, label: `${p.u.name} (${Math.round(p.u.x)}, ${Math.round(p.u.z)})` }, ev.fields));
+    }
+    if (!edits.length) { U.pending.clear(); return { ok: true }; }
+    const r = engine().applyUniqueEdits(ctx.ir, edits);
+    if (!r.applied) { S.msg = 'No Unique edit could be applied: ' + r.failed.join('; '); return { ok: false, msg: S.msg }; }
+    const old = ctx.ir;
+    const ir2 = Object.assign({}, r.ir, { reports: Object.assign({}, r.ir.reports, { warnings: r.ir.reports.warnings.concat([`Uniques edited: ${r.applied} item(s) changed (level / item / crafter tag)`]) }) });
+    U.undo.push({ old, now: ir2 });
+    U.pending.clear();
+    S.msg = `Applied ${r.applied} Unique edit(s) to the loaded file; they are in the converted file.` + (r.failed.length ? ` Not applied: ${r.failed.join('; ')}` : '');
+    ctx.setIR(ir2);
+    return { ok: true };
+  }
+
   function wire(ctx) {
     const $ = (id) => document.getElementById(id);
     const res = S.cache;
@@ -2670,13 +2842,55 @@ BFC.b64encode = b64encode;
     const ho = $('cr-hoursOn'), hh = $('cr-hours');
     if (ho) ho.onchange = () => { S.hoursOn = ho.checked; S.msg = ''; ctx.rerender(); };
     if (hh) hh.onchange = () => { const v = parseFloat(hh.value); S.hours = Number.isFinite(v) && v > 0 ? v : 1; S.msg = ''; ctx.rerender(); };
+    // ---- editable Uniques
+    const updBar = () => {
+      const bar = $('cr-pending');
+      if (!bar) return;
+      const { n, bad } = pendingCounts();
+      bar.style.display = U.pending.size ? '' : 'none';
+      const t = $('cr-pending-n');
+      if (t) t.textContent = `${n} unsaved Unique edit${n === 1 ? '' : 's'}${bad ? `, ${bad} with a problem (red)` : ''} - `;
+      const ap = $('cr-apply');
+      if (ap) ap.disabled = !n || !!bad;
+    };
+    const editable = (c) => { const r = U.recs.get(c.closest('tr').dataset.key); return !!r && !(c.dataset.f === 'prefab' && r.ref.k === 'd'); };
+    const startEdit = (td) => {                       // the cell turns into an input of the same size showing the raw value
+      if (td.querySelector('input') || !editable(td)) return;
+      const tr = td.closest('tr'), u = U.recs.get(tr.dataset.key), f = td.dataset.f;
+      const p = U.pending.get(tr.dataset.key), t = p ? p.t : {};
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.className = 'cr-ed'; inp.value = t[f] ?? origText(u, f); inp.spellcheck = false; inp.autocomplete = 'off';
+      if (f === 'prefab') inp.setAttribute('list', 'cr-items');            // suggestions: prefab names with the English item name
+      if (f === 'crafter') inp.style.fontFamily = 'var(--mono, monospace)';
+      td.title = ''; td.innerHTML = '<span style="visibility:hidden">' + td.innerHTML + '</span>'; td.appendChild(inp); inp.focus(); inp.select();   // the old text stays (hidden) so the cell cannot change size
+      let done = false;
+      const finish = (commit, step) => {
+        if (done) return;
+        done = true;
+        if (commit) commitEdit(u, f, inp.value);
+        paintCell(td, u, f);
+        updBar();
+        if (step) { const cells = [...document.querySelectorAll('td.cr-c')].filter(editable); const i = cells.indexOf(td) + step; if (cells[i]) startEdit(cells[i]); }
+      };
+      inp.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true, 0); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false, 0); }
+        else if (e.key === 'Tab') { e.preventDefault(); finish(true, e.shiftKey ? -1 : 1); }
+      };
+      inp.onblur = () => finish(true, 0);
+    };
+    document.querySelectorAll('td.cr-c').forEach((td) => { td.onclick = () => startEdit(td); });
+    const apb = $('cr-apply'); if (apb) apb.onclick = () => { const r = applyPending(ctx); if (!r.ok) { S.msg = r.msg; ctx.rerender(); } };
+    const dcb = $('cr-discard'); if (dcb) dcb.onclick = () => { U.pending.clear(); S.msg = ''; ctx.rerender(); };
+    const unb = $('cr-undo'); if (unb) unb.onclick = () => { const top = U.undo[U.undo.length - 1]; if (top && ctx.ir === top.now) { U.undo.pop(); S.msg = 'Unique edits undone.'; ctx.setIR(top.old); } };
+    updBar();
     const copy = $('cr-copy');
     if (copy && res) copy.onclick = async () => { await copyText(engine().excelRow(res)); copy.textContent = 'Copied ✓'; setTimeout(() => { copy.textContent = 'Copy to Tracker'; }, 1800); };
     const csv = $('cr-csv');
     if (csv && res) csv.onclick = () => S.deps.download(`${(ctx.name || 'event').replace(/[^\w\- ()\[\]]+/g, '_')}.loot.csv`, engine().lootCsv(res, true), 'text/csv');
   }
 
-  const api = { init, html, wire, state: S, files: filesNow, autoCopy };
+  const api = { init, html, wire, state: S, files: filesNow, autoCopy, applyPending };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.BFCreators = api;
 })(typeof window !== 'undefined' ? window : null);
@@ -4307,6 +4521,7 @@ function renderReport(ir) {
 }
 function convert() {
   if (!state.ir) return;
+  { const pe = BFCreators.applyPending(creatorsCtx()); if (!pe.ok) { setStatus('err', esc(pe.msg)); return; } }   // v5: bake pending Unique edits into the loaded file first
   const status = $('conv-status'), t = state.target;
   const opt = (id) => $(id);
   const { ir, counts } = applyDrops(state.ir, state.drops);
