@@ -3261,7 +3261,24 @@ BFC.b64encode = b64encode;
   const TYPE_BUCKET = { bool: 'ints', int: 'ints', float: 'floats', long: 'longs', string: 'strings', vec3: 'vec3s', quat: 'quats' };
   const CAT_FIELD_TYPE = { bool: 'bool', int: 'int', float: 'float', string: 'string', Vector3: 'vec3', GameObject: 'string', ItemDrop: 'string' };
   const TYPES = ['', 'bool', 'int', 'float', 'long', 'string', 'vec3', 'quat'];
-  const OPS = ['set', 'setDefault', 'remove'];
+  const OPS = ['set', 'setDefault', 'remove', 'removeItem'];
+  const SLOT_KEYS = ['item', 'itemData', 'variant', 'quality', 'stack', 'durability', 'crafterID', 'crafterName', 'dataCount', 'worldLevel', 'pickedUp'];
+  // VisEquipment also keeps the item hash it shows under these keys (the armor stand copies its N_item slots there).
+  // Some of them have a variant / quality key next to them; remove those together with the item.
+  const VISUAL_ITEM_KEYS = {
+    HelmetItem: ['HelmetItem'],
+    ShoulderItem: ['ShoulderItem', 'ShoulderItemVariant', 'ShoulderItemQuality'],
+    ChestItem: ['ChestItem'],
+    LegItem: ['LegItem'],
+    RightItem: ['RightItem', 'RightItemQuality'],
+    LeftItem: ['LeftItem', 'LeftItemVariant', 'LeftItemQuality'],
+    LeftBackItem: ['LeftBackItem', 'LeftBackItemVariant', 'LeftBackItemQuality'],
+    RightBackItem: ['RightBackItem', 'RightBackItemQuality'],
+    UtilityItem: ['UtilityItem'],
+    TrinketItem: ['TrinketItem'],
+    HairItem: ['HairItem'],
+    BeardItem: ['BeardItem'],
+  };
   const KILL_CLASSES = ['Character', 'WearNTear', 'Destructible', 'TreeBase', 'TreeLog', 'MineRock', 'MineRock5'];
   const hexName = (h) => '#0x' + (h >>> 0).toString(16).toUpperCase().padStart(8, '0');
   const STAR_PREFIX = '<size=120%><#fd4>';      // the yellow star tag put in front of flattened enemies' names
@@ -3443,6 +3460,29 @@ BFC.b64encode = b64encode;
     const hashOf = (name) => { let h = hashCache.get(name); if (h === undefined) { h = cat.nameToHash(name); hashCache.set(name, h); } return h; };
     const chainOf = (cls) => [cls].concat((classes[cls] && classes[cls].b) || []);
 
+    // ArmorStand slots: "0_item", "1_item"... plus the item data keys the game reads/writes for that slot.
+    const slotItemNameByHash = new Map();
+    for (let i = 0; i < 24; i++) slotItemNameByHash.set(hashOf(i + '_item'), i + '_item');
+    const visualItemNameByHash = new Map();
+    for (const k of Object.keys(VISUAL_ITEM_KEYS)) visualItemNameByHash.set(hashOf(k), k);
+    const visualHashCache = new Map();
+    function visualHashes(key) {
+      let s = visualHashCache.get(key);
+      if (!s) { s = new Set(VISUAL_ITEM_KEYS[key].map((k) => hashOf(k))); visualHashCache.set(key, s); }
+      return s;
+    }
+    const slotHashCache = new Map();
+    function slotHashes(slot) {
+      let s = slotHashCache.get(slot);
+      if (!s) {
+        s = new Set(SLOT_KEYS.map((k) => hashOf(`${slot}_${k}`)));
+        for (let j = 0; j < 256; j++) { s.add(hashOf(`${slot}_data_${j}`)); s.add(hashOf(`${slot}_data__${j}`)); }   // old custom-data keys
+        slotHashCache.set(slot, s);
+      }
+      return s;
+    }
+
+
     const infoCache = new Map();
     function stemInfo(stem) {
       if (!stem) return { comps: null, chain: null };
@@ -3570,11 +3610,16 @@ BFC.b64encode = b64encode;
       if (!acts.length) out.errors.push('no actions');
       acts.forEach((a, i) => {
         const op = String(a.op || 'set');
-        const act = { op: op.toLowerCase(), key: String(a.key || '').trim(), type: a.type || '', value: null };
+        const act = { op: op.toLowerCase(), key: String(a.key || '').trim(), type: a.type || '', value: null, list: null };
         if (!OPS.some((o) => o.toLowerCase() === act.op)) { out.errors.push(`action ${i + 1}: unknown op "${op}"`); return; }
+        if (act.op === 'removeitem' && !act.key) act.key = '*_item';
         if (!act.key) { out.errors.push(`action ${i + 1}: no key`); return; }
         if (act.type && !TYPES.includes(act.type)) { out.errors.push(`action ${i + 1}: unknown type "${act.type}"`); return; }
-        if (act.op !== 'remove') {
+        if (act.op === 'removeitem') {
+          const txt = String(a.value ?? '').trim();
+          act.list = txt ? parsePatterns(txt) : null;
+          if (!act.list) { out.errors.push(`action ${i + 1}: no item list`); return; }
+        } else if (act.op !== 'remove') {
           if (!String(a.value ?? '').trim()) { out.errors.push(`action ${i + 1}: no value`); return; }
           try { act.value = compileExpr(String(a.value), funcs, vars); } catch (e) { out.errors.push(`action ${i + 1} value: ${e.message}`); return; }
         }
@@ -3615,8 +3660,56 @@ BFC.b64encode = b64encode;
       return added;
     }
 
+    // removeItem: every armor stand slot (and every visual equipment key) whose item is in the action's list loses
+    // the item and all of its saved data.  The key is the numbered-slot key pattern (usually "*_item"); the list is
+    // comma/space separated prefab names or globs.  Visual keys (HelmetItem, ShoulderItem, ...) are always checked:
+    // some rewind files keep the listed item only there.
+    function applyRemoveItem(a, z, getW) {
+      const keyRe = globRe(a.key);
+      const foundSlots = [], foundVisual = [];
+      for (const b of ['ints', 'strings']) {
+        for (const e of z[b]) {
+          const kn = e.name || cat.resolve(e.hash) || slotItemNameByHash.get(e.hash) || visualItemNameByHash.get(e.hash);
+          if (!kn) continue;
+          const m = /^(\d+)_item$/.exec(kn);
+          const visual = VISUAL_ITEM_KEYS[kn] ? kn : null;
+          if (!m && !visual) continue;
+          if (m && !keyRe.test(kn)) continue;
+          let item = null;
+          if (b === 'ints') { const v = plain(e.value); if (v) item = cat.resolve(v) || hexName(v); }
+          else {
+            const s = String(e.value ?? '');
+            if (s) item = /^-?\d+$/.test(s) ? (cat.resolve(Number(s)) || s) : /^0x[0-9a-f]+$/i.test(s) ? (cat.resolve(parseInt(s, 16) | 0) || s) : s;
+          }
+          if (!item || !matchPatterns(a.list, item)) continue;
+          if (m) foundSlots.push({ slot: +m[1], key: kn, item });
+          else foundVisual.push({ key: kn, item });
+        }
+      }
+      const targets = [], seen = new Set();
+      const add = (t) => { if (!seen.has(t.key)) { seen.add(t.key); targets.push(t); } };
+      for (const f of foundSlots) {
+        const hashes = slotHashes(f.slot);
+        if (BK.some((b) => z[b].some((e) => hashes.has(e.hash)))) add({ key: f.key, item: f.item, hashes });
+      }
+      for (const f of foundVisual) {
+        const hashes = visualHashes(f.key);
+        if (BK.some((b) => z[b].some((e) => hashes.has(e.hash)))) add({ key: f.key, item: f.item, hashes });
+      }
+      if (!targets.length) return { st: 'same' };
+      const w = getW();
+      const lines = [];
+      for (const t of targets) {
+        let removed = 0;
+        for (const b of BK) { const n = w[b].length; w[b] = w[b].filter((e) => !t.hashes.has(e.hash)); removed += n - w[b].length; }
+        if (removed) lines.push(`${t.key}: ${t.item} -> (removed item)`);
+      }
+      return lines.length ? { st: 'changed', lines } : { st: 'same' };
+    }
+
     // one action on one object.  Reads from z (the object as it is now), writes through getW() (a private copy).
     function applyAction(a0, val, z, getW, c) {
+      if (a0.op === 'removeitem') return applyRemoveItem(a0, z, getW);
       const key = resolveName(c, a0.key);
       if (key == null) return { st: 'skip', why: `${a0.key}: prefab has no ${String(a0.key).slice(1).split('.')[0]} component` };
       const a = key === a0.key ? a0 : Object.assign({}, a0, { key });
@@ -3704,7 +3797,11 @@ BFC.b64encode = b64encode;
           cr.acts.forEach((a, k) => {
             const res = applyAction(a, vals[k], z, getW, c);
             if (res.st === 'skip') { anySkipped = true; rr.skipped.set(res.why, (rr.skipped.get(res.why) || 0) + 1); return; }
-            if (res.st === 'changed') { anyChanged = true; lines.push(res.line); rr.flagsAdded += res.flags || 0; }
+            if (res.st === 'changed') {
+              anyChanged = true;
+              if (res.lines) for (const l of res.lines) lines.push(l); else lines.push(res.line);
+              rr.flagsAdded += res.flags || 0;
+            }
           });
           if (anyChanged) {
             rr.changed++; changedObjs.add(i);
@@ -3721,6 +3818,19 @@ BFC.b64encode = b64encode;
   // ---------------------------------------------------------------------------------------------------------------
   // preset rules (the one-click buttons) - ordinary rules, editable like any other
   // ---------------------------------------------------------------------------------------------------------------
+  const MAGICA_CLOTH_ITEMS = [
+    'ArmorDress1', 'ArmorDress10', 'ArmorDress2', 'ArmorDress3', 'ArmorDress4', 'ArmorDress5', 'ArmorDress6', 'ArmorDress7', 'ArmorDress8', 'ArmorDress9',
+    'Beard1', 'Beard13', 'Beard14', 'Beard18', 'Beard20',
+    'CapeAsh', 'CapeAsksvin', 'CapeDeepNorth', 'CapeDeepNorthMage', 'CapeDeerHide', 'CapeFeather', 'CapeLinen', 'CapeLox', 'CapeOdin', 'CapeTrollHide', 'CapeWolf',
+    'Charred_HipCloth', 'Charred_MageCloths',
+    'FW_CapeLinen', 'FW_CapeTrollHide', 'FW_CapeWolf',
+    'GoblinShaman_Headdress_feathers', 'GoblinShaman_Staff_Feathers',
+    'Hair1', 'Hair10', 'Hair10_2', 'Hair11', 'Hair11_2', 'Hair11_3', 'Hair13', 'Hair13_2', 'Hair13_3', 'Hair16', 'Hair16_2', 'Hair17', 'Hair17_2', 'Hair2',
+    'Hair24', 'Hair24_2', 'Hair24_3', 'Hair27', 'Hair27_2', 'Hair27_3', 'Hair28', 'Hair28_2', 'Hair28_3', 'Hair4', 'Hair4_2', 'Hair4_3', 'Hair9', 'Hair9_2',
+    'HelmetPointyHat', 'HelmetStrawHat', 'HelmetYule',
+    'SP_ArmorDress1', 'SP_CapeLinen', 'SP_CapeTrollHide', 'SP_CapeWolf',
+  ].join(', ');
+
   const PRESETS = [
     { id: 'nosupport', label: 'Pieces: support wear, burnable, ash immunity = False',
       rule: { name: 'Pieces: WearNTear m_noSupportWear, m_burnable, m_ashDamageImmune = false', enabled: true, prefab: '', component: 'WearNTear', where: '',
@@ -3743,6 +3853,9 @@ BFC.b64encode = b64encode;
     { id: 'startag', label: 'Enemies: ★ name tag from damage',
       rule: { name: 'Enemies: add a ★ name tag from RandomSkillFactor (2 x (factor - 1) stars)', enabled: true, prefab: '', component: 'Character', where: "key('RandomSkillFactor') > 1",
         actions: [{ op: 'set', key: '@Character.m_name', type: 'string', value: "tagName(mName(), key('RandomSkillFactor'))" }] } },
+    { id: 'magicacloth', label: 'Armor stands: remove Magica Cloth items',
+      rule: { name: 'Armor stands: remove the listed Magica Cloth items', enabled: true, prefab: 'ArmorStand_Male, ArmorStand_Female', component: 'ArmorStand', where: '',
+        actions: [{ op: 'removeItem', key: '*_item', type: '', value: MAGICA_CLOTH_ITEMS }] } },
   ];
 
   const normRule = (r) => ({
@@ -3832,10 +3945,12 @@ BFC.b64encode = b64encode;
 <li><b>Prefab(s)</b> - which kinds of object. Empty means every object. <code>wood_*</code> means every prefab whose name starts with wood_ (the * is a wildcard). Separate several with commas; a ! in front excludes: <code>wood_*, !wood_floor*</code>.</li>
 <li><b>Has component</b> - only objects that have this part: <code>WearNTear</code> (anything that takes damage), <code>Container</code> (chests), <code>Character</code> (creatures). The box suggests names as you type.</li>
 <li><b>Only when</b> - an extra yes/no test. <code>key('health') &gt; 1000000</code> reads "the object's health is over a million". Empty means always.</li>
-<li><b>Actions</b> - what to change. Each one has: what to do (<b>set</b> a value, <b>setDefault</b> sets it only if the object has none yet, <b>remove</b> deletes the key), the <b>key</b>, the <b>type</b> (leave it on auto unless the preview asks for one) and the <b>value</b>.</li>
+<li><b>Actions</b> - what to change. Each one has: what to do (<b>set</b> a value, <b>setDefault</b> sets it only if the object has none yet, <b>remove</b> deletes the key, <b>removeItem</b> deletes the listed items from armor stand slots and visual equipment keys), the <b>key</b>, the <b>type</b> (leave it on auto unless the preview asks for one) and the <b>value</b>. For <b>removeItem</b> the key is the numbered-slot pattern (usually <code>*_item</code>), the value is a comma-separated list of item prefab names or globs, and the type is not used.</li>
 </ul>
 <h4>Keys and fields</h4>
 <p>Objects keep their settings under names. A plain name such as <code>health</code> or <code>level</code> is a saved value. A name with a dot, such as <code>WearNTear.m_health</code>, is a <i>field</i> of one of the object's parts (Class.field): it overrides the prefab's built-in setting. The key box suggests names for the component you picked and for names found in your file.</p>
+<h4>Armor stands</h4>
+<p>An armor stand keeps each attached item in a numbered slot: <code>0_item</code>, <code>1_item</code>, and so on, with the item's saved data next to it. It also copies the item it shows into visual keys such as <code>HelmetItem</code>, <code>ShoulderItem</code>, <code>ChestItem</code> and <code>LegItem</code> (stored as the item hash). <b>removeItem</b> deletes the whole slot for every numbered slot whose item is in the list, and deletes a visual key (with its variant / quality key) when its item is in the list. Other items and the rest of the stand are not changed.</p>
 <h4>Writing values and tests</h4>
 <ul>
 <li>Numbers as usual: <code>-1</code>, <code>2.5</code>, <code>1e6</code>. Yes/no is <code>true</code> or <code>false</code> (really 1 and 0). Text goes in quotes: <code>'Hello'</code>.</li>
@@ -3857,6 +3972,7 @@ BFC.b64encode = b64encode;
 <li>Only things near a spot: Only when <code>dist(4640, -6810) &lt; 30</code> means within 30 m of X 4640, Z -6810.</li>
 <li>Fill in a value only where there is none yet: use <b>setDefault</b> instead of set.</li>
 <li>Delete a leftover key: action <b>remove</b>, key <code>MyKey</code>.</li>
+<li>Remove listed items from armor stands: Prefab(s) <code>ArmorStand_Male, ArmorStand_Female</code>; action <b>removeItem</b>, key <code>*_item</code>, value <code>ArmorDress1, CapeLinen, ...</code>.</li>
 </ul>
 <h4>If something is skipped</h4>
 <ul>
@@ -3883,6 +3999,7 @@ Examples:  key('health') > 1000000 and comp('WearNTear')      level >= 3 and glo
 Prefab box: comma separated globs, ! excludes (wood_*, !wood_floor*).  Component box: a class on the prefab, e.g. WearNTear, Container, Character (matches Humanoid prefabs).
 Setting a Class.field key also sets the HasFields / HasFields&lt;Class&gt; switches, and is skipped on prefabs that lack that component (the game would ignore it).
 Keys with no known type need a type in the action. Rules run in order; each rule sees the result of the one before. Nothing changes in the loaded file until Apply.
+removeItem (action op)  deletes every armor stand slot and visual equipment key (HelmetItem, ShoulderItem, ChestItem, LegItem, ...) whose item is in the action's list; key = numbered-slot pattern (usually *_item), value = comma/space separated prefab names or globs
 A value that comes out empty (null, for example iif(test, null, ...) or tagName() with nothing to tag) leaves that key unchanged.</div>${GUIDE}</details>`;
 
   function html() { return STYLE + '<div id="bt-root"></div>'; }
@@ -3908,12 +4025,15 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
         if (rr.samples.length) stat += `<details><summary>sample changes</summary><div class="list">${rr.samples.map((s) => `${esc(s.prefab)} @ ${Math.round(s.x)}, ${Math.round(s.z)}\n   ${s.lines.map(esc).join('\n   ')}`).join('\n')}</div></details>`;
       } else if (rr && rr.errors.length) stat = rr.errors.map((e) => `<div class="bt-err">${esc(e)}</div>`).join('');
       const dl = `<datalist id="bt-k-${i}">${keySuggestions(ctx, r.component).map((k) => `<option value="${esc(k)}">`).join('')}</datalist>`;
-      const acts = r.actions.map((a, k) => `<tr data-a="${k}">
+      const acts = r.actions.map((a, k) => {
+        const itemOp = a.op === 'removeItem';
+        return `<tr data-a="${k}">
         <td style="width:104px"><select data-f="op">${OPS.map((o) => `<option ${o === a.op ? 'selected' : ''}>${o}</option>`).join('')}</select></td>
-        <td><input type="text" list="bt-k-${i}" data-f="key" value="${esc(a.key)}" placeholder="health  or  WearNTear.m_health"></td>
-        <td style="width:84px"><select data-f="type">${TYPES.map((t) => `<option value="${t}" ${t === a.type ? 'selected' : ''}>${t || 'auto'}</option>`).join('')}</select></td>
-        <td><input type="text" data-f="value" value="${esc(a.value)}" placeholder="${a.op === 'remove' ? '(not used)' : '-1   or   key(\'health\') * 2'}" ${a.op === 'remove' ? 'disabled' : ''}></td>
-        <td style="width:30px"><button class="btn btn-sm" data-act="adel" title="remove action">×</button></td></tr>`).join('');
+        <td><input type="text" list="bt-k-${i}" data-f="key" value="${esc(a.key)}" placeholder="${itemOp ? '*_item' : 'health  or  WearNTear.m_health'}"></td>
+        <td style="width:84px"><select data-f="type" ${itemOp ? 'disabled title="not used by removeItem"' : ''}>${TYPES.map((t) => `<option value="${t}" ${t === a.type ? 'selected' : ''}>${t || 'auto'}</option>`).join('')}</select></td>
+        <td><input type="text" data-f="value" value="${esc(a.value)}" placeholder="${a.op === 'remove' ? '(not used)' : itemOp ? 'ArmorDress1, CapeLinen, ...' : '-1   or   key(\'health\') * 2'}" ${a.op === 'remove' ? 'disabled' : ''}></td>
+        <td style="width:30px"><button class="btn btn-sm" data-act="adel" title="remove action">×</button></td></tr>`;
+      }).join('');
       return `<div class="bt-rule ${r.enabled ? '' : 'off'}" data-r="${i}">
         <div class="bt-head"><label class="inl"><input type="checkbox" data-f="enabled" ${r.enabled ? 'checked' : ''}> on</label>
           <input type="text" class="grow" data-f="name" value="${esc(r.name)}">
