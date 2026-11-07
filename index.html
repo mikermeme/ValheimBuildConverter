@@ -2121,6 +2121,9 @@ BFC.b64encode = b64encode;
     const H = {};
     for (const k of ['items', 'itemData', 'item', 'level', 'health', 'max_health', 'creator', 'picked', 'stack', 'quality', 'crafterName', 'crafterID', 'addedDefaultItems', 'enabled']) H[k] = gsh(k);
     const slotHash = (i, k) => gsh(i + '_' + k);
+    // VisEquipment keys: an armor stand also copies the item it shows into these keys (hash = GetStableHashCode).
+    const VISUAL_ITEM_KEYS = ['HelmetItem', 'ShoulderItem', 'ChestItem', 'LegItem', 'RightItem', 'LeftItem', 'LeftBackItem', 'RightBackItem', 'UtilityItem', 'TrinketItem', 'HairItem', 'BeardItem'];
+    for (const k of VISUAL_ITEM_KEYS) { H[k] = gsh(k); H[k + 'Quality'] = gsh(k + 'Quality'); }
 
     const itemInfo = (stem) => data.items[stem] || null;
     const itemName = (stem) => (idolName.get(stem) || (itemInfo(stem) ? itemInfo(stem)[0] : stem));
@@ -2229,6 +2232,17 @@ BFC.b64encode = b64encode;
       return { prefab: name, stack: it.stack || 1, quality: it.quality || 1, crafterName: it.crafterName || '', ref: prefix === '' ? { k: 's' } : { k: 'a', slot } };
     }
 
+    // VisEquipment key on an armor stand (HelmetItem, ShoulderItem, ...). It stores only the item hash and
+    // sometimes a quality; there is no full item record, so the row is read-only (ref: null).
+    function readVisualItem(z, key) {
+      const iv = val(z, 'ints', H[key]); const sv = val(z, 'strings', H[key]);
+      let name = null;
+      if (iv) name = nameOfHash(iv) || hexName(iv); else if (sv) name = sv;
+      if (!name) return null;
+      const quality = num(val(z, 'ints', H[key + 'Quality']), 1) || 1;
+      return { prefab: name, stack: 1, quality, crafterName: '', ref: null };
+    }
+
     const cleanTag = (s) => String(s || '').replace(/<br\s*\/?>/gi, ' ').replace(/<\/?[^>]*>/g, '').replace(/\s+/g, ' ').trim();
 
     function analyze(files, opts) {
@@ -2334,10 +2348,20 @@ BFC.b64encode = b64encode;
           } else if (comps.includes('ArmorStand')) {
             res.counts.stands++;
             const why = standBlocked(z, stem, false);
+            const seen = new Set();
             for (let i = 0; i < 24; i++) {
               const st = readStandItem(z, 'slot', i);
               if (!st) continue;
+              seen.add(st.prefab);
               if (why && !countWarded) { res.skipped[why]++; res.skippedItems.push({ reason: why, item: st.prefab, qty: st.stack, quality: st.quality }); } else addStack(z, `armor stand slot ${i}`, st);
+            }
+            // Some rewind files keep a listed item only in the visual keys (HelmetItem, ShoulderItem, ...).
+            // A visual key that repeats an item already read from a numbered slot is the same item: skip it.
+            for (const key of VISUAL_ITEM_KEYS) {
+              const st = readVisualItem(z, key);
+              if (!st || seen.has(st.prefab)) continue;
+              seen.add(st.prefab);
+              if (why && !countWarded) { res.skipped[why]++; res.skippedItems.push({ reason: why, item: st.prefab, qty: st.stack, quality: st.quality }); } else addStack(z, `armor stand ${key}`, st);
             }
           }
           // ---- loose dropped items
