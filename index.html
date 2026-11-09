@@ -3864,6 +3864,9 @@ BFC.b64encode = b64encode;
     { id: 'indestructible', label: 'Indestructible: health -1',
       rule: { name: 'Indestructible pieces: health and WearNTear.m_health -> -1', enabled: true, prefab: '', component: 'WearNTear', where: "key('health') > 1000000",
         actions: [{ op: 'set', key: 'health', type: 'float', value: '-1' }, { op: 'set', key: 'WearNTear.m_health', type: 'float', value: '-1' }] } },
+    { id: 'nocreator', label: 'Breakable pieces: remove creator key',
+      rule: { name: 'Breakable pieces: remove the creator key', enabled: true, prefab: '', component: 'WearNTear', where: "key('health') < 1000000",
+        actions: [{ op: 'remove', key: 'creator', type: '', value: '' }] } },
     { id: 'levels', label: 'Enemies: level 1, same HP & damage, ★ name',
       rule: { name: 'Enemies: level -> 1, keep health and damage, tag the name with the old level', enabled: true, prefab: '', component: 'Character', where: 'level > 1 and baseHp() != null',
         // The game recomputes max_health = m_health x level on load whenever an enemy is at full health, so the max_health key would be
@@ -4000,6 +4003,7 @@ BFC.b64encode = b64encode;
 <li>Fill in a value only where there is none yet: use <b>setDefault</b> instead of set.</li>
 <li>Delete a leftover key: action <b>remove</b>, key <code>MyKey</code>.</li>
 <li>Delete a key on every object: leave Prefab(s) and Has component empty; action <b>remove</b>, key <code>cheated</code>.</li>
+<li>Remove the builder's name from breakable pieces: Has component <code>WearNTear</code>, Only when <code>key('health') &lt; 1000000</code>; action <b>remove</b>, key <code>creator</code>.</li>
 <li>Remove listed items from armor stands: Prefab(s) <code>ArmorStand_Male, ArmorStand_Female</code>; action <b>removeItem</b>, key <code>*_item</code>, value <code>ArmorDress1, CapeLinen, ...</code>.</li>
 </ul>
 <h4>If something is skipped</h4>
