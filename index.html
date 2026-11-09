@@ -3880,6 +3880,9 @@ BFC.b64encode = b64encode;
     { id: 'magicacloth', label: 'Armor stands: remove Magica Cloth items',
       rule: { name: 'Armor stands: remove the listed Magica Cloth items', enabled: true, prefab: 'ArmorStand_Male, ArmorStand_Female', component: 'ArmorStand', where: '',
         actions: [{ op: 'removeItem', key: '*_item', type: '', value: MAGICA_CLOTH_ITEMS }] } },
+    { id: 'nocheated', label: 'All prefabs: remove cheated key',
+      rule: { name: 'All prefabs: remove the cheated key', enabled: true, prefab: '', component: '', where: '',
+        actions: [{ op: 'remove', key: 'cheated', type: '', value: '' }] } },
   ];
 
   const normRule = (r) => ({
@@ -3996,6 +3999,7 @@ BFC.b64encode = b64encode;
 <li>Only things near a spot: Only when <code>dist(4640, -6810) &lt; 30</code> means within 30 m of X 4640, Z -6810.</li>
 <li>Fill in a value only where there is none yet: use <b>setDefault</b> instead of set.</li>
 <li>Delete a leftover key: action <b>remove</b>, key <code>MyKey</code>.</li>
+<li>Delete a key on every object: leave Prefab(s) and Has component empty; action <b>remove</b>, key <code>cheated</code>.</li>
 <li>Remove listed items from armor stands: Prefab(s) <code>ArmorStand_Male, ArmorStand_Female</code>; action <b>removeItem</b>, key <code>*_item</code>, value <code>ArmorDress1, CapeLinen, ...</code>.</li>
 </ul>
 <h4>If something is skipped</h4>
@@ -4024,6 +4028,7 @@ Prefab box: comma separated globs, ! excludes (wood_*, !wood_floor*).  Component
 Setting a Class.field key also sets the HasFields / HasFields&lt;Class&gt; switches, and is skipped on prefabs that lack that component (the game would ignore it).
 Keys with no known type need a type in the action. Rules run in order; each rule sees the result of the one before. Nothing changes in the loaded file until Apply.
 removeItem (action op)  deletes every armor stand slot and visual equipment key (HelmetItem, ShoulderItem, ChestItem, LegItem, ...) whose item is in the action's list; key = numbered-slot pattern (usually *_item), value = comma/space separated prefab names or globs
+remove (action op)  deletes a key; with an empty Prefab(s) and Has component box it runs on every object in the file (for example key cheated)
 A value that comes out empty (null, for example iif(test, null, ...) or tagName() with nothing to tag) leaves that key unchanged.</div>${GUIDE}</details>`;
 
   function html() { return STYLE + '<div id="bt-root"></div>'; }
