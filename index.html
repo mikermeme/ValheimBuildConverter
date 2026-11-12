@@ -2119,7 +2119,7 @@ BFC.b64encode = b64encode;
     const cape = cfg.creatorCape || { prefab: 'CapeLinen', quality: 6 };
 
     const H = {};
-    for (const k of ['items', 'itemData', 'item', 'level', 'health', 'max_health', 'creator', 'picked', 'stack', 'quality', 'crafterName', 'crafterID', 'addedDefaultItems', 'enabled']) H[k] = gsh(k);
+    for (const k of ['items', 'itemData', 'item', 'level', 'health', 'max_health', 'creator', 'picked', 'stack', 'quality', 'crafterName', 'crafterID', 'addedDefaultItems', 'enabled', 'piece']) H[k] = gsh(k);
     const slotHash = (i, k) => gsh(i + '_' + k);
     // VisEquipment keys: an armor stand also copies the item it shows into these keys (hash = GetStableHashCode).
     const VISUAL_ITEM_KEYS = ['HelmetItem', 'ShoulderItem', 'ChestItem', 'LegItem', 'RightItem', 'LeftItem', 'LeftBackItem', 'RightBackItem', 'UtilityItem', 'TrinketItem', 'HairItem', 'BeardItem'];
@@ -2186,7 +2186,10 @@ BFC.b64encode = b64encode;
     function enemyDrops(stem, level, mult) {
       const s = data.src[stem];
       if (!s || !s.e) return [];
-      const f = Math.min(Math.pow(2, Math.max(1, level) - 1), 1e9);
+      // CharacterDrop.GenerateDropList uses Mathf.Max(1, (int)Mathf.Pow(2f, level - 1)). Unity's runtime cast of
+      // 2^31 and above overflows to Int32.MinValue, so Mathf.Max makes the multiplier 1: level 32+ drops like level 1.
+      const n = Math.pow(2, Math.max(1, level) - 1);
+      const f = n > 2147483647 ? 1 : Math.min(n, 1e9);
       const out = [];
       for (const [item, chance, amin, amax, flags] of s.e) {
         const lm = !!(flags & 1), lmna = !!(flags & 2), opp = !!(flags & 4);
@@ -2241,6 +2244,15 @@ BFC.b64encode = b64encode;
       if (!name) return null;
       const quality = num(val(z, 'ints', H[key + 'Quality']), 1) || 1;
       return { prefab: name, stack: 1, quality, crafterName: '', ref: null };
+    }
+
+    // A loose dropped item (ItemDrop) or a consumable placed with the Serving Tray: stack / quality / crafter come from itemData.
+    function readDrop(z, stem) {
+      let stack = 1, quality = 1, crafterName = '';
+      const bytes = val(z, 'bytes', H.itemData);
+      if (bytes && bytes.length > 2) { try { const it = Items.readCompact(new Items.Rd(bytes.subarray(1)), bytes[0], nameOfHash); stack = it.stack; quality = it.quality; crafterName = it.crafterName; } catch (e) { /* keep defaults */ } }
+      else { stack = num(val(z, 'ints', H.stack), 1) || 1; quality = num(val(z, 'ints', H.quality), 1) || 1; crafterName = val(z, 'strings', H.crafterName) || ''; }
+      return { prefab: stem, stack, quality, crafterName, ref: { k: 'd' } };
     }
 
     const cleanTag = (s) => String(s || '').replace(/<br\s*\/?>/gi, ' ').replace(/<\/?[^>]*>/g, '').replace(/\s+/g, ' ').trim();
@@ -2299,13 +2311,14 @@ BFC.b64encode = b64encode;
           if (!spKey && !(flags && flags.noRaw) && !rawExclude.has(item) && item !== blue) { const r = res.raw.get(item) || { qty: 0, gold: 0 }; r.qty += qty; r.gold += gold; res.raw.set(item, r); }
           if (price == null && itemInfo(item)) res.unpriced.set(item, (res.unpriced.get(item) || 0) + qty);
         };
-        const addStack = (z, source, st) => {            // a concrete item stack (container / stand / ground)
+        const addStack = (z, source, st, inTotals) => {      // a concrete item stack (container / stand / ground)
+          if (inTotals === undefined) inTotals = true;
           let item = st.prefab;
           if (/^#0x/.test(item)) { const h = parseInt(item.slice(3), 16) | 0; if (idolByHash.has(h)) item = idolByHash.get(h); else res.unknownItems.set(item, (res.unknownItems.get(item) || 0) + st.stack); }
           const isFish = itemType(item) === 'Fish';
           const flags = isFish ? (st.quality >= 4 ? { special: `${item}@L${st.quality}` } : null) : (st.quality >= 2 ? { noRaw: true } : null);
-          add(z, 'container', source, item, st.stack, st.quality > 1 ? `L${st.quality}` : '', true, flags);
-          if (st.quality >= 2 && !isFish) {
+          add(z, 'container', source, item, st.stack, st.quality > 1 ? `L${st.quality}` : '', inTotals, flags);
+          if (inTotals && st.quality >= 2 && !isFish) {
             const rec = { prefab: item, name: itemName(item), level: st.quality, crafter: cleanTag(st.crafterName), crafterRaw: st.crafterName, where: z.prefabName || hexName(z.prefabHash), x: z.pos.x, y: z.pos.y, z: z.pos.z, file: fileName, slot: source, zdo: curZ, ref: st.ref || null, rawPrefab: st.prefab, current: !!f.current };
             if (item === cape.prefab && st.quality === cape.quality) res.capes.push(rec); else res.uniques.push(rec);
           }
@@ -2317,6 +2330,17 @@ BFC.b64encode = b64encode;
           const stem = z.prefabName || nameOfHash(z.prefabHash);
           if (stem && !z.prefabName) z.prefabName = stem;
           const comps = (stem && cat.prefabComponents(stem)) || [];
+
+          // A food/potion placed with the Serving Tray (Feaster) is an ItemDrop with the 'piece' ZDO flag set.
+          // Players cannot take it home, so it is not loot: it stays in the loot CSV (in_totals = no) for audit,
+          // but adds no gold and no copy-able list entries. The same item in a container, on an item stand or as a
+          // loose drop (no 'piece' flag) still counts below.
+          const consumable = itemType(stem) === 'Consumable';
+          const placedConsumable = consumable && !!val(z, 'ints', H.piece);
+          if (placedConsumable) {
+            addStack(z, 'placed (Feaster)', readDrop(z, stem), false);
+            continue;
+          }
 
           // ---- direct loot: containers
           const invBytes = val(z, 'bytes', H.items);
@@ -2367,15 +2391,11 @@ BFC.b64encode = b64encode;
           // ---- loose dropped items
           if (comps.includes('ItemDrop') && !comps.includes('ItemStand') && !comps.includes('ArmorStand') && stem) {
             res.counts.droppedItems++;
-            let stack = 1, quality = 1, crafterName = '';
-            const bytes = val(z, 'bytes', H.itemData);
-            if (bytes && bytes.length > 2) { try { const it = Items.readCompact(new Items.Rd(bytes.subarray(1)), bytes[0], nameOfHash); stack = it.stack; quality = it.quality; crafterName = it.crafterName; } catch (e) { /* keep defaults */ } }
-            else { stack = num(val(z, 'ints', H.stack), 1) || 1; quality = num(val(z, 'ints', H.quality), 1) || 1; crafterName = val(z, 'strings', H.crafterName) || ''; }
-            addStack(z, 'dropped item', { prefab: stem, stack, quality, crafterName, ref: { k: 'd' } });
+            addStack(z, 'dropped item', readDrop(z, stem));
           }
 
           const src = stem ? data.src[stem] : null;
-          if (!src) continue;
+          if (!src || consumable) continue;               // a loose food/potion drop is already counted above; it is not a breakable piece
 
           // ---- pickables
           if (src.k === 'pickable') {
@@ -2609,7 +2629,7 @@ BFC.b64encode = b64encode;
     deps: null, engine: null, engineCat: null,
     extra: [],                 // extra files added in the tab: { name, ir }
     useCurrent: true,
-    hoursOn: true, countWarded: false, minutes: 60, msg: '',
+    hoursOn: true, countWarded: false, minutes: 5, msg: '',
     cache: null, cacheKey: '',
   };
 
@@ -2728,6 +2748,7 @@ BFC.b64encode = b64encode;
 
     const b = res.buckets;
     const specials = eng.specialLines(res);
+    const raw = eng.rawLines(res);
     const unres = [...res.unknownItems.entries()];
     const unpriced = [...res.unpriced.entries()].sort((a, c) => c[1] - a[1]);
     const excluded = [...res.excluded.entries()].sort((a, c) => c[1] - a[1]);
@@ -2765,6 +2786,7 @@ BFC.b64encode = b64encode;
       </div>
       <div class="kv">Sources: ${num(c.containers)} containers · ${num(c.stands)} stands · ${num(c.droppedItems)} dropped items · ${num(c.pickables)} pickables · ${num(c.enemies)} killable enemies · ${num(c.breakables)} breakables · ${num(c.spawners)} spawners${perHourRows && !S.hoursOn ? ` (${num(perHourRows)} per-hour rows are in the CSV but not in the totals)` : ''}</div>
 
+      ${raw.length ? `<details><summary>Raw item list (${raw.length}) — as copied to Tracker</summary><div class="list">${raw.map(esc).join('\n')}</div></details>` : ''}
       ${skippedBlock}
       ${res.warnings.length ? `<div class="status warn">${res.warnings.map(esc).join('<br>')}</div>` : ''}
       ${exclTotal ? `<details><summary>${num(exclTotal)} instance(s) not counted as breakable/killable (HP outside 1 to 1,000,000 or tool tier above 6)</summary><div class="list">${excluded.map(([k, n]) => `${n}\t${esc(k)}`).join('\n')}</div></details>` : ''}
@@ -2888,7 +2910,7 @@ BFC.b64encode = b64encode;
     const wd = $('cr-ward'); if (wd) wd.onchange = () => { S.countWarded = wd.checked; S.msg = ''; ctx.rerender(); };
     const ho = $('cr-hoursOn'), hh = $('cr-hours');
     if (ho) ho.onchange = () => { S.hoursOn = ho.checked; S.msg = ''; ctx.rerender(); };
-    if (hh) hh.onchange = () => { const v = parseFloat(hh.value); S.minutes = Number.isFinite(v) && v > 0 ? v : 60; S.msg = ''; ctx.rerender(); };
+    if (hh) hh.onchange = () => { const v = parseFloat(hh.value); S.minutes = Number.isFinite(v) && v > 0 ? v : 5; S.msg = ''; ctx.rerender(); };
     // ---- editable Uniques
     const updBar = () => {
       const bar = $('cr-pending');
