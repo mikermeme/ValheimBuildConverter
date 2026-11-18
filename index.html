@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Valheim Build File Converter v5</title>
+<title>Valheim Build File Converter v6</title>
 <style>
 :root {
   --bg: #12121a; --surface: #1c1c28; --surface2: #26263a; --border: #34344e;
@@ -97,7 +97,7 @@ footer { margin-top: 22px; color: var(--text2); font-size: 12px; border-top: 1px
 <body>
 <div class="wrap">
 <header>
-  <h1>Valheim Build File Converter <span class="v">v5.0</span></h1>
+  <h1>Valheim Build File Converter <span class="v">v6.0</span></h1>
   <span class="chip" id="cat-chip">Loading catalog…</span>
 </header>
 
@@ -2877,8 +2877,13 @@ BFC.b64encode = b64encode;
     return { n, bad };
   }
   // Bake the pending Unique edits into the loaded file (new IR object, so every tab refreshes). Returns { ok, msg }; Convert calls this first.
-  function applyPending(ctx) {
+  function applyPending(ctx, opts) {
+    opts = opts || {};
     if (!U.pending.size || !ctx.ir || !ctx.setIR) return { ok: true };
+    if (!opts.allowCross && root && root.BFEnemies && root.BFEnemies.hasPending && root.BFEnemies.hasPending())
+      return { ok: false, msg: 'Apply or discard the pending Enemy edits first.' };
+    if (!opts.allowCross && root && root.BFInventory && root.BFInventory.hasPending && root.BFInventory.hasPending())
+      return { ok: false, msg: 'Apply or discard the pending Items edits first.' };
     const edits = [];
     for (const p of U.pending.values()) {
       const ev = evalEdit(p.u, p.t);
@@ -2894,6 +2899,7 @@ BFC.b64encode = b64encode;
     U.undo.push({ old, now: ir2 });
     U.pending.clear();
     S.msg = `Applied ${r.applied} Unique edit(s) to the loaded file; they are in the converted file.` + (r.failed.length ? ` Not applied: ${r.failed.join('; ')}` : '') + (r.notes && r.notes.length ? ` Durability was not updated for ${r.notes.length} item(s): no durability data for them (re-run extract_v4.py, then build5.py).` : '');
+    if (opts.noSet) return { ok: true, ir: ir2 };
     ctx.setIR(ir2);
     return { ok: true };
   }
@@ -2992,7 +2998,7 @@ BFC.b64encode = b64encode;
     if (csv && res) csv.onclick = () => S.deps.download(`${(ctx.name || 'event').replace(/[^\w\- ()\[\]]+/g, '_')}.loot.csv`, engine().lootCsv(res, true), 'text/csv');
   }
 
-  const api = { init, html, wire, state: S, files: filesNow, autoCopy, applyPending };
+  const api = { init, html, wire, state: S, files: filesNow, autoCopy, applyPending, hasPending: () => U.pending.size > 0 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.BFCreators = api;
 })(typeof window !== 'undefined' ? window : null);
@@ -3005,6 +3011,12 @@ BFC.b64encode = b64encode;
  *
  *   BFEnemies.init({ data, getCat, esc, download, getFiles })      once, at boot (data = loot-data JSON, getFiles(ctx) -> [{name, ir}])
  *   BFEnemies.html(ctx) / BFEnemies.wire(ctx)                       from the inspector tab renderer
+ *   BFEnemies.applyPending(ctx, opts)                               bake the pending group edits into the loaded file
+ *   BFEnemies.hasPending()                                          true while the tab has unsaved edits
+ *
+ * The Enemy groups table is editable: level, HP and skill factor can be typed and are written to every
+ * enemy of that group in the loaded file.  Added files stay read-only, and the derived columns (count,
+ * vs vanilla, hit, flags) are computed, never stored.
  *
  * Rules taken from the game code (Character.cs / Attack.cs):
  *   HP        = ZDO 'health' if set, else 'max_health', else prefab m_health x level (world level 0)
@@ -3023,6 +3035,10 @@ BFC.b64encode = b64encode;
   const idOf = (o) => { if (!S.ids.has(o)) S.ids.set(o, ++S.nextId); return S.ids.get(o); };
   function init(deps) { S.deps = deps; }
 
+  // ---- editing the Enemy groups table: pending edits keyed by the group key, applied to the loaded file
+  const E = { pending: new Map(), pendingIr: null, undo: [], recs: new Map(), msg: '', msgIr: null };
+  const hasPending = () => E.pending.size > 0;
+
   const plain = (s) => String(s).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
   const median = (arr) => { if (!arr.length) return 0; const a = [...arr].sort((x, y) => x - y); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
   const num = (n, d) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d == null ? 0 : d });
@@ -3036,7 +3052,8 @@ BFC.b64encode = b64encode;
 
     const enemies = [];
     for (const f of files) {
-      for (const z of f.ir.zdos) {
+      for (let zi = 0; zi < f.ir.zdos.length; zi++) {
+        const z = f.ir.zdos[zi];
         const stem = z.prefabName || cat.prefabName(z.prefabHash);
         const src = stem ? data.src[stem] : null;
         if (!src || src.k !== 'enemy') continue;
@@ -3062,6 +3079,7 @@ BFC.b64encode = b64encode;
           file: f.name, stem, name: plain(src.n || stem), x: z.pos.x, y: z.pos.y, z: z.pos.z, level, rsf, baseHp, hp, hpSource,
           maxHit, avgHit, adjMax: maxHit * dmgFactor, adjAvg: avgHit * dmgFactor, hasAttacks: hits.length > 0,
           vanillaHp: baseHp !== undefined ? baseHp * level : NaN, flags: [], counted: true,
+          current: !!f.current, zi,
         };
         e.hpRatio = e.vanillaHp > 0 && Number.isFinite(hp) ? hp / e.vanillaHp : NaN;
         if (!Number.isFinite(hp) || !(hp >= HP_MIN && hp <= HP_MAX)) { e.counted = false; e.flags.push(`unkillable (HP ${Number.isFinite(hp) ? hp : '?'})`); }
@@ -3093,10 +3111,11 @@ BFC.b64encode = b64encode;
     for (const e of enemies) {
       const key = `${e.stem}|${e.level}|${Math.round(e.hp)}|${e.rsf.toFixed(2)}`;
       let g = groups.get(key);
-      if (!g) { g = { stem: e.stem, name: e.name, counted: e.counted, level: e.level, hp: e.hp, rsf: e.rsf, adjMax: e.adjMax, maxHit: e.maxHit, hasAttacks: e.hasAttacks, hpRatio: e.hpRatio, flags: new Set(), members: [] }; groups.set(key, g); }
+      if (!g) { g = { gid: key, stem: e.stem, name: e.name, counted: e.counted, level: e.level, hp: e.hp, rsf: e.rsf, adjMax: e.adjMax, maxHit: e.maxHit, hasAttacks: e.hasAttacks, hpRatio: e.hpRatio, baseHp: e.baseHp, flags: new Set(), members: [] }; groups.set(key, g); }
       g.members.push(e); e.flags.forEach((fl) => g.flags.add(fl));
     }
     const groupList = [...groups.values()].sort((a, b) => (Number(b.counted) - Number(a.counted)) || ((b.members.length * (b.hp || 0)) - (a.members.length * (a.hp || 0))));
+    for (const g of groupList) { g.allCurrent = g.members.every((m) => m.current); g.currentCount = g.members.filter((m) => m.current).length; }
 
     // clusters: single-linkage on XZ, then occupied area from overlapping "room" discs
     const link = Math.max(1, params.linkDist), r = Math.max(1, params.roomRadius), aoe = Math.max(0, Math.min(1, params.aoe / 100));
@@ -3167,11 +3186,159 @@ BFC.b64encode = b64encode;
     return S.cache;
   }
 
+  // ---- editing a group: level, HP and skill factor are typed; the other columns are derived ----------
+  const origText = (g, f) => (f === 'level' ? String(g.level) : f === 'hp' ? (Number.isFinite(g.hp) ? String(Math.round(g.hp)) : '') : String(Math.round(g.rsf * 100) / 100));
+  // what the typed texts mean: fields = values that really change, bad = problems (per field)
+  function evalEdit(g, t) {
+    const out = { fields: {}, bad: {} };
+    if (t.level !== undefined) {
+      const s = String(t.level).trim();
+      if (/^\d{1,5}$/.test(s) && +s >= 1 && +s <= 65535) { if (+s !== g.level) out.fields.level = +s; }
+      else out.bad.level = 'level must be a whole number from 1 to 65,535';
+    }
+    if (t.hp !== undefined) {
+      const s = String(t.hp).trim().replace(/,/g, '');
+      if (!/^\d+$/.test(s)) out.bad.hp = 'HP must be a whole number';
+      else if (+s < HP_MIN || +s > HP_MAX) out.bad.hp = `HP must be ${num(HP_MIN)} to ${num(HP_MAX)}`;
+      else if (Math.round(+s) !== Math.round(g.hp)) out.fields.hp = +s;
+    }
+    if (t.skill !== undefined) {
+      const s = String(t.skill).trim().replace(/,/g, '');
+      if (!/^\d+(\.\d{1,2})?$/.test(s)) out.bad.skill = 'skill factor must be a number (up to 2 decimals)';
+      else if (+s < 0.01 || +s > 100) out.bad.skill = 'skill factor must be 0.01 to 100';
+      else if (Math.round(+s * 100) !== Math.round(g.rsf * 100)) out.fields.rsf = +s;
+    }
+    return out;
+  }
+  // values a row shows: pending when valid, else what the file holds
+  function previewOf(g, t) {
+    const ev = evalEdit(g, t || {});
+    const level = ev.fields.level !== undefined ? ev.fields.level : g.level;
+    const hp = ev.fields.hp !== undefined ? ev.fields.hp : g.hp;
+    const rsf = ev.fields.rsf !== undefined ? ev.fields.rsf : g.rsf;
+    const vanilla = Number.isFinite(g.baseHp) ? g.baseHp * level : NaN;
+    return {
+      ev, level, hp, rsf, vanilla,
+      ratio: vanilla > 0 && Number.isFinite(hp) ? hp / vanilla : NaN,
+      adjMax: g.hasAttacks ? g.maxHit * levelDamage(level) * rsf * SKILL_MEAN : 0,
+    };
+  }
+  function cellView(g, f, pv, t) {
+    const esc = S.deps.esc;
+    const editable = (f === 'level' || f === 'hp' || f === 'skill') && g.allCurrent;
+    const locked = !editable && (f === 'level' || f === 'hp' || f === 'skill');
+    const bad = pv.ev.bad[f];
+    const cls = (locked ? ' locked' : bad ? ' bad' : t[f] !== undefined ? ' mod' : '');
+    let html, title;
+    if (f === 'level') { html = esc(bad ? String(t.level) : String(pv.level)); title = bad || (locked ? 'Only a group that is entirely in the loaded file can be edited' : 'Click to edit the level of every enemy in this group'); }
+    else if (f === 'hp') { html = bad ? esc(String(t.hp)) : Number.isFinite(pv.hp) ? esc(num(pv.hp)) : '?'; title = bad || (locked ? 'Only a group that is entirely in the loaded file can be edited' : 'Click to edit the stored health of every enemy in this group'); }
+    else if (f === 'skill') { html = bad ? esc(String(t.skill)) : pv.rsf !== 1 ? esc(pv.rsf.toFixed(2)) : ''; title = bad || (locked ? 'Only a group that is entirely in the loaded file can be edited' : 'Click to edit RandomSkillFactor for every enemy in this group'); }
+    else if (f === 'ratio') { html = Number.isFinite(pv.ratio) ? 'x' + pv.ratio.toFixed(2) : ''; title = 'HP divided by the vanilla HP (prefab x level); computed'; }
+    else { html = g.hasAttacks ? dmgText(pv.adjMax) : '-'; title = 'Highest attack per hit with the level and skill factor applied; computed'; }
+    return { cls, html, title };
+  }
+  const cellHtml = (g, f, pv, t) => {
+    const v = cellView(g, f, pv, t);
+    return `<td class="n en-c${v.cls}" data-f="${f}" title="${S.deps.esc(v.title)}">${v.html}</td>`;
+  };
+  function paintCell(td, g, f) {
+    const p = E.pending.get(g.gid), t = p ? p.t : {};
+    const v = cellView(g, f, previewOf(g, t), t);
+    td.className = 'n en-c' + v.cls; td.title = v.title; td.innerHTML = v.html;
+  }
+  function commitEdit(g, f, value) {
+    const key = g.gid;
+    let p = E.pending.get(key);
+    if (!p) { p = { g, t: {} }; E.pending.set(key, p); }
+    if (String(value).trim() === origText(g, f)) delete p.t[f]; else p.t[f] = value;
+    if (!Object.keys(p.t).length) E.pending.delete(key);
+    S.msg = '';
+  }
+  function pendingCounts() {
+    let n = 0, bad = 0;
+    for (const [key, p] of E.pending) {
+      const g = E.recs.get(key);
+      if (!g) { n++; bad++; continue; }
+      const ev = evalEdit(g, p.t);
+      if (Object.keys(ev.bad).length || Object.keys(ev.fields).length) n++;
+      if (Object.keys(ev.bad).length) bad++;
+    }
+    return { n, bad };
+  }
+  // write the group edit into every member of the group in the loaded file (only the touched objects are cloned)
+  function applyEnemyEdits(ir, edits) {
+    const cat = S.deps.getCat();
+    const H = { level: cat.gsh('level'), health: cat.gsh('health'), rsf: cat.gsh('RandomSkillFactor') };
+    const failed = [];
+    let applied = 0;
+    const zdos = ir.zdos.slice();
+    const byZ = new Map();
+    for (const e of edits) { if (!byZ.has(e.zi)) byZ.set(e.zi, []); byZ.get(e.zi).push(e); }
+    for (const [zi, list] of byZ) {
+      const z0 = zdos[zi];
+      const stem = z0 && (z0.prefabName || cat.prefabName(z0.prefabHash));
+      const exp = list[0].expect;
+      const levelNow = z0 ? Math.max(1, Number((z0.ints.find((q) => q.hash === H.level) || {}).value) || 1) : NaN;
+      const rsfNow = z0 ? (((z0.floats.find((q) => q.hash === H.rsf) || {}).value) ?? 1) : NaN;
+      if (!z0 || stem !== exp.stem || levelNow !== exp.level || Math.round(rsfNow * 100) !== Math.round(exp.rsf * 100)) {
+        for (const e of list) failed.push(`${e.label}: the object is no longer that enemy`);
+        continue;
+      }
+      const z = Object.assign({}, z0, { ints: z0.ints.map((q) => Object.assign({}, q)), floats: z0.floats.map((q) => Object.assign({}, q)) });
+      const putInt = (hash, v) => { const x = z.ints.find((q) => q.hash === hash); if (x) x.value = v; else z.ints.push({ hash, value: v }); };
+      const putFloat = (hash, v) => { const x = z.floats.find((q) => q.hash === hash); if (x) x.value = v; else z.floats.push({ hash, value: v }); };
+      for (const e of list) {
+        if (e.fields.level !== undefined) putInt(H.level, e.fields.level);
+        if (e.fields.hp !== undefined) putFloat(H.health, e.fields.hp);
+        if (e.fields.rsf !== undefined) putFloat(H.rsf, e.fields.rsf);
+        applied++;
+      }
+      zdos[zi] = z;
+    }
+    return { ir: applied ? Object.assign({}, ir, { zdos }) : ir, applied, failed };
+  }
+  function applyPending(ctx, opts) {
+    opts = opts || {};
+    if (!E.pending.size || !ctx.ir || !ctx.setIR) return { ok: true };
+    if (!opts.allowCross) {
+      if (root && root.BFCreators && root.BFCreators.hasPending && root.BFCreators.hasPending())
+        return { ok: false, msg: 'Apply or discard the pending Creator Loot edits first.' };
+      if (root && root.BFInventory && root.BFInventory.hasPending && root.BFInventory.hasPending())
+        return { ok: false, msg: 'Apply or discard the pending Items edits first.' };
+    }
+    const edits = [], problems = [];
+    for (const [key, p] of E.pending) {
+      const g = E.recs.get(key);
+      if (!g) { problems.push('an enemy group disappeared'); continue; }
+      if (!g.allCurrent) { problems.push(`${g.name}: this group has enemies from added files`); continue; }
+      const ev = evalEdit(g, p.t);
+      if (Object.keys(ev.bad).length) { problems.push(`${g.name}: ${Object.values(ev.bad)[0]}`); continue; }
+      if (!Object.keys(ev.fields).length) continue;
+      for (const m of g.members) edits.push({ zi: m.zi, expect: { stem: m.stem, level: m.level, rsf: m.rsf }, fields: ev.fields, label: `${m.name} (${Math.round(m.x)}, ${Math.round(m.z)})` });
+    }
+    if (problems.length) return { ok: false, msg: 'Fix the Enemy edits marked in red first: ' + problems.slice(0, 4).join('; ') + (problems.length > 4 ? ` (and ${problems.length - 4} more)` : '') + '.' };
+    if (!edits.length) { E.pending.clear(); return { ok: true }; }
+    const r = applyEnemyEdits(ctx.ir, edits);
+    if (!r.applied) { S.msg = 'No enemy edit could be applied: ' + r.failed.join('; '); S.msgIr = idOf(ctx.ir); return { ok: false, msg: S.msg }; }
+    const msg = `Enemies edited: ${r.applied} instance(s) changed (level / HP / skill factor)`;
+    const ir2 = Object.assign({}, r.ir, { reports: Object.assign({}, r.ir.reports, { warnings: r.ir.reports.warnings.concat([msg]) }) });
+    E.undo.push({ old: ctx.ir, now: ir2 });
+    E.pending.clear();
+    S.cache = null;
+    S.msg = `Applied ${r.applied} enemy edit(s) to the loaded file; they are in the converted file.` + (r.failed.length ? ` Not applied: ${r.failed.join('; ')}` : '');
+    S.msgIr = idOf(ir2);
+    if (opts.noSet) return { ok: true, ir: ir2 };
+    ctx.setIR(ir2);
+    return { ok: true };
+  }
+
   const dmgText = (v) => (v > 0 ? num(v, v < 10 ? 1 : 0) : '-');
   const fmtTime = (s) => (s >= 60 ? `${(s / 60).toFixed(1)} min` : `${s.toFixed(0)} s`);
 
   function html(ctx) {
     const esc = S.deps.esc;
+    const irId = ctx.ir ? idOf(ctx.ir) : 0;
+    if (E.pendingIr !== irId) { E.pending.clear(); E.pendingIr = irId; E.msg = ''; E.msgIr = null; }
     const res = compute(ctx);
     const controls = `
       <div class="kv"><b>Enemy difficulty</b> — uses the files ticked on the Creator Loot tab.</div>
@@ -3182,19 +3349,32 @@ BFC.b64encode = b64encode;
         · party DPS <input type="text" id="en-dps" size="4" value="${S.partyDps}"> <span class="dim">(0 = no time estimate)</span>
       </div>`;
     if (!res) return controls + '<p class="dim">Load a file or tick one on the Creator Loot tab.</p>';
+    E.recs = new Map();
+    for (const g of res.groups) E.recs.set(g.gid, g);
     const t = res.totals;
     const flagCell = (fl) => (fl.length ? `<span class="warn">${esc(fl.join(' · '))}</span>` : '');
     const groupRows = res.groups.map((g) => {
       const coords = g.members.slice(0, 40).map((e) => `${Math.round(e.x)}, ${Math.round(e.z)}`).join('\n') + (g.members.length > 40 ? `\n... +${g.members.length - 40} more` : '');
-      return `<tr><td><details><summary>${esc(g.name)}</summary><div class="list">${esc(coords)}</div></details></td><td class="n">${g.members.length}</td><td class="n">${g.level}</td>
-        <td class="n">${Number.isFinite(g.hp) ? num(g.hp) : '?'}</td><td class="n">${Number.isFinite(g.hpRatio) ? 'x' + g.hpRatio.toFixed(2) : ''}</td><td class="n">${g.rsf !== 1 ? g.rsf.toFixed(2) : ''}</td>
-        <td class="n">${g.hasAttacks ? dmgText(g.adjMax) : '-'}</td><td>${flagCell([...g.flags])}</td></tr>`;
+      const p = E.pending.get(g.gid), tg = p ? p.t : {}, pv = previewOf(g, tg);
+      return `<tr data-key="${esc(g.gid)}"><td><details><summary>${esc(g.name)}</summary><div class="list">${esc(coords)}</div></details></td><td class="n">${g.members.length}</td>${cellHtml(g, 'level', pv, tg)}
+        ${cellHtml(g, 'hp', pv, tg)}${cellHtml(g, 'ratio', pv, tg)}${cellHtml(g, 'skill', pv, tg)}${cellHtml(g, 'hit', pv, tg)}<td>${flagCell([...g.flags])}</td></tr>`;
     }).join('');
     const clusterRows = res.clusters.slice(0, 60).map((c) => `<tr><td class="n">${c.id}</td><td>${esc(c.comp)}</td><td class="n">${c.n}</td><td class="n">${num(c.sumHp)}</td><td class="n">${num(c.pool)}</td>
         <td class="n">${num(c.area)}</td><td class="n">${num(c.density, 1)}</td><td class="n">${dmgText(c.hitDensity)}</td>${S.partyDps > 0 ? `<td class="n">${fmtTime(c.time)}</td>` : ''}
         <td class="dim">${Math.round(c.cx)}, ${Math.round(c.cz)}</td><td>${flagCell(c.flags)}</td></tr>`).join('');
     const noAtk = t.noAttackData ? `<div class="note warn">${num(t.noAttackData)} enemies have no attack data (re-run extract_v4.py in LootTables, then build4.py): their damage shows as '-'.</div>` : '';
-    return controls + `
+    const topUndo = E.undo[E.undo.length - 1];
+    const msg = S.msgIr === irId ? S.msg : '';
+    const bar = `<style>
+      .hist td.en-c{cursor:text;position:relative}.hist td.en-c:hover{background:var(--surface2)}
+      .hist td.en-c.locked{cursor:default}.hist td.en-c.locked:hover{background:none}
+      .hist td.en-c.mod{box-shadow:inset 0 -2px 0 var(--accent)}
+      .hist td.en-c.bad{box-shadow:inset 0 -2px 0 var(--err);color:var(--err)}
+      td.en-c input.en-ed{position:absolute;left:0;top:0;width:100%;height:100%;min-width:0;box-sizing:border-box;margin:0;padding:0 6px;border:0;border-radius:0;outline:1px solid var(--warn);background:var(--surface);color:var(--text);font:inherit;line-height:inherit}
+    </style>
+    <div id="en-pending" class="status info" style="display:none"><span id="en-pending-n"></span><button class="btn btn-sm" id="en-apply">Apply to loaded file</button> <button class="btn btn-sm" id="en-discard">Discard</button></div>
+    ${msg ? `<div class="status info">${esc(msg)}</div>` : ''}`;
+    return controls + bar + `
       <div class="stats">
         <div class="stat"><div class="n">${num(t.enemies)}</div><div class="l">enemies${t.unkillable ? ` (${t.unkillable} unkillable)` : ''}</div></div>
         <div class="stat"><div class="n">${num(t.sumHp)}</div><div class="l">total HP</div></div>
@@ -3205,8 +3385,10 @@ BFC.b64encode = b64encode;
       </div>
       ${noAtk}
       <div class="tools"><button class="btn btn-primary" id="en-csv">Download enemies CSV</button><button class="btn btn-primary" id="en-csv2">Download clusters CSV</button>
+        <button class="btn btn-sm" id="en-undo" ${topUndo && ctx.ir === topUndo.now ? '' : 'disabled'}>Undo last apply</button>
         <span class="dim">median HP ${num(t.hpMed)} · median hit ${dmgText(t.hitMed)} · ${num(t.clusters)} clusters</span></div>
       <h3>Enemy groups <span class="dim">(prefab, level, HP, skill factor; hit = highest attack per hit with level and skill factor applied)</span></h3>
+      <div class="kv"><b>Enemy groups are editable</b>: click level, HP or skill factor to change it for every enemy in that group in the loaded file; count, vs vanilla, hit and flags are computed. Groups that include added files are read-only.</div>
       <div class="scroll" style="max-height:340px;overflow-y:auto"><table class="hist"><thead><tr><td>enemy</td><td class="n">count</td><td class="n">level</td><td class="n">HP</td><td class="n">vs vanilla</td><td class="n">skill</td><td class="n">hit</td><td>flags</td></tr></thead><tbody>${groupRows}</tbody></table></div>
       <h3>Clusters <span class="dim">(enemies within ${res.params.link} m of each other; density = effective pool per 100 m² of occupied room)</span></h3>
       <div class="scroll" style="max-height:340px;overflow-y:auto"><table class="hist"><thead><tr><td class="n">#</td><td>enemies</td><td class="n">n</td><td class="n">sum HP</td><td class="n">pool</td><td class="n">m²</td><td class="n">HP/100m²</td><td class="n">dmg/100m²</td>${S.partyDps > 0 ? '<td class="n">time</td>' : ''}<td>at</td><td>flags</td></tr></thead><tbody>${clusterRows}</tbody></table></div>
@@ -3265,6 +3447,54 @@ BFC.b64encode = b64encode;
     bind('en-link', 'linkDist', 1); bind('en-room', 'roomRadius', 1); bind('en-aoe', 'aoe', 0); bind('en-dps', 'partyDps', 0);
     const res = S.cache; if (!res) return;
     drawMap(res); bindHover();
+
+    // ---- editable Enemy groups
+    const updBar = () => {
+      const bar = $('en-pending');
+      if (!bar) return;
+      const { n, bad } = pendingCounts();
+      bar.style.display = E.pending.size ? '' : 'none';
+      const t = $('en-pending-n');
+      if (t) t.textContent = `${n} unsaved enemy edit${n === 1 ? '' : 's'}${bad ? `, ${bad} with a problem (red)` : ''} - `;
+      const ap = $('en-apply');
+      if (ap) ap.disabled = !n || !!bad;
+    };
+    const startEdit = (td) => {
+      if (td.querySelector('input') || td.classList.contains('locked')) return;
+      const tr = td.closest('tr'), g = E.recs.get(tr.dataset.key), f = td.dataset.f;
+      if (!g || !g.allCurrent || !(f === 'level' || f === 'hp' || f === 'skill')) return;
+      const p = E.pending.get(g.gid), t = p ? p.t : {};
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.className = 'en-ed'; inp.value = t[f] !== undefined ? String(t[f]) : origText(g, f); inp.spellcheck = false; inp.autocomplete = 'off';
+      td.title = ''; td.innerHTML = '<span style="visibility:hidden">' + td.innerHTML + '</span>'; td.appendChild(inp); inp.focus(); inp.select();
+      let done = false;
+      const repaint = () => { for (const c of tr.querySelectorAll('td.en-c')) paintCell(c, g, c.dataset.f); updBar(); };
+      const finish = (commit, step) => {
+        if (done) return;
+        done = true;
+        if (commit) commitEdit(g, f, inp.value);
+        repaint();
+        if (step) {
+          const cells = [...document.querySelectorAll('td.en-c')].filter((c) => !c.classList.contains('locked'));
+          const i = cells.indexOf(td) + step;
+          if (cells[i]) startEdit(cells[i]);
+        }
+      };
+      inp.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true, 0); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false, 0); }
+        else if (e.key === 'Tab') { e.preventDefault(); finish(true, e.shiftKey ? -1 : 1); }
+      };
+      inp.onblur = () => finish(true, 0);
+    };
+    document.querySelectorAll('td.en-c').forEach((td) => { td.onclick = () => startEdit(td); });
+    const apb = $('en-apply');
+    if (apb) apb.onclick = () => { const r = applyPending(ctx); if (!r.ok) { S.msg = r.msg; S.msgIr = idOf(ctx.ir); ctx.rerender(); } };
+    const dcb = $('en-discard'); if (dcb) dcb.onclick = () => { E.pending.clear(); S.msg = ''; ctx.rerender(); };
+    const unb = $('en-undo');
+    if (unb) unb.onclick = () => { const top = E.undo[E.undo.length - 1]; if (top && ctx.ir === top.now) { E.undo.pop(); S.msg = 'Enemy edits undone.'; S.msgIr = idOf(top.old); S.cache = null; ctx.setIR(top.old); } };
+    updBar();
+
     const base = (ctx.name || 'event').replace(/[^\w\- ()\[\]]+/g, '_');
     const b1 = $('en-csv'), b2 = $('en-csv2');
     if (b1) b1.onclick = () => S.deps.download(`${base}.enemies.csv`, csvOf(['file', 'prefab', 'name', 'x', 'y', 'z', 'level', 'hp', 'hp_source', 'vanilla_hp', 'hp_vs_vanilla', 'skill_factor', 'max_hit_base', 'max_hit_adjusted', 'cluster', 'flags'],
@@ -3273,7 +3503,8 @@ BFC.b64encode = b64encode;
       res.clusters.map((c) => [c.id, c.cx.toFixed(1), c.cz.toFixed(1), c.n, c.comp, Math.round(c.sumHp), Math.round(c.maxHp), Math.round(c.pool), Math.round(c.area), c.overlap.toFixed(2), c.density.toFixed(1), c.hitDensity.toFixed(1), c.time ? c.time.toFixed(0) : '', c.flags.join('; ')])), 'text/csv');
   }
 
-  const api = { init, html, wire, analyze, state: S, constants: { SKILL_MEAN, TH } };
+  const api = { init, html, wire, analyze, applyPending, hasPending, state: S, constants: { SKILL_MEAN, TH },
+    _test: { evalEdit, previewOf, applyEnemyEdits, pendingCounts, edits: E } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.BFEnemies = api;
 })(typeof window !== 'undefined' ? window : null);
@@ -4213,10 +4444,1264 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
 })(typeof window !== 'undefined' ? window : null);
 
 </script>
+<script>
+/*
+ * bfc-inventory.js - the "Items" tab of Build File Converter v6.
+ *
+ *   BFInventory.init({ data, getCat, BFC, BFItems, esc })   once, at boot
+ *   BFInventory.html(ctx) / BFInventory.wire(ctx)          from the inspector tab renderer
+ *     ctx = { ir, name, rerender, setIR }                  (ir = the file loaded in the converter, may be null)
+ *   BFInventory.applyPending(ctx, opts)                    bake pending edits into the loaded file
+ *   BFInventory.hasPending()                               true while the tab has unsaved edits
+ *
+ * The tab is the editing surface for EVERY item in a rewind: container grids (items byte array or
+ * legacy base64 string), item stands, armor stands (numbered slots and visual-only equipment keys),
+ * loose dropped items and inert inventories on prefabs the game never reads.  It shows the same core
+ * columns as items.csv plus the details row (variant, crafter id, world level, flags, itemdata), edits
+ * container items, adds and removes container rows and changes a container's grid size.  Edits stay
+ * pending until they are applied to the loaded file with the button (or baked in by Convert).
+ */
+(function (root) {
+  'use strict';
+
+  const S = {
+    deps: null, pending: new Map(), size: new Map(), pendingIr: null, msgIr: null, seq: 0,
+    undo: [], recs: new Map(), open: new Set(), dup: new Set(),
+    scanCache: null, itemLookup: null, choices: null, msg: '',
+  };
+
+  function init(deps) { S.deps = deps; }
+
+  const ids = new WeakMap();
+  let nextId = 0;
+  const idOf = (o) => { if (!ids.has(o)) ids.set(o, ++nextId); return ids.get(o); };
+
+  const num = (n, d) => Number(n).toLocaleString(undefined, { maximumFractionDigits: d == null ? 0 : d });
+  const cat = () => S.deps.getCat();
+  const BFItems = () => S.deps.BFItems;
+  const gsh = (s) => cat().gsh(s);
+  const val = (z, bk, hash) => { const e = z[bk].find((x) => x.hash === hash); return e ? e.value : undefined; };
+  const nval = (v, d) => (typeof v === 'bigint' ? Number(v) : typeof v === 'number' ? v : d);
+  const hexName = (h) => '#0x' + (h >>> 0).toString(16).toUpperCase().padStart(8, '0');
+  const nameOfHash = (h) => cat().prefabName(h) || cat().resolve(h);
+  const escHtml = (s) => (S.deps && S.deps.esc ? S.deps.esc(s) : String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'));
+
+  // TextMeshPro rich text -> HTML (same rules as the Uniques column on the Creator Loot tab)
+  const CSS_COLOR = /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})$/;
+  function tmpHtml(raw) {
+    const s = String(raw || '');
+    const stack = [];
+    let out = '', color = null, last = 0, m;
+    const emit = (text) => { if (!text) return; const t = escHtml(text); out += color ? `<span style="color:${color}">${t}</span>` : t; };
+    const re = /<\/?[^<>]*>/g;
+    while ((m = re.exec(s))) {
+      emit(s.slice(last, m.index)); last = re.lastIndex;
+      const tag = m[0].slice(1, -1).trim();
+      let mm;
+      if (/^br\s*\/?$/i.test(tag)) emit(' ');
+      else if ((mm = /^color\s*=\s*"?([^">\s]+)"?$/i.exec(tag))) { stack.push(color); color = CSS_COLOR.test(mm[1]) ? mm[1] : null; }
+      else if ((mm = /^(#[0-9a-fA-F]{3,8})$/.exec(tag))) { stack.push(color); color = mm[1]; }
+      else if (/^\/color$/i.test(tag)) color = stack.length ? stack.pop() : null;
+    }
+    emit(s.slice(last));
+    return out;
+  }
+
+  // ---- item data / prefab lookup -------------------------------------------------
+  function itemInfo(prefab) { const d = S.deps.data && S.deps.data.items; return d ? (d[prefab] || null) : null; }
+  function itemName(prefab) { const i = itemInfo(prefab); return i ? i[0] : prefab; }
+  function maxStack(prefab) { const i = itemInfo(prefab); return i && i[3] > 0 ? i[3] : 1; }
+  function maxQuality(prefab) { const i = itemInfo(prefab); return i && i[2] > 0 ? i[2] : 1; }
+  function maxDur(prefab, quality) {                     // null = item has no durability, undefined = no data
+    const i = itemInfo(prefab);
+    if (!i || i.length < 8) return undefined;
+    return i[5] ? i[6] + Math.max(0, (quality || 1) - 1) * i[7] : null;
+  }
+  function resolveItem(text) {                          // prefab name, English name or #0xHASH -> prefab name
+    if (!text) return null;
+    const s = String(text).trim();
+    if (/^#0x[0-9a-f]{1,8}$/i.test(s)) return s;
+    const items = (S.deps.data && S.deps.data.items) || {};
+    if (items[s]) return s;
+    if (!S.itemLookup) {
+      S.itemLookup = new Map();
+      for (const k of Object.keys(items)) S.itemLookup.set(k.toLowerCase(), k);
+      for (const [k, v] of Object.entries(items)) { const n = String(v[0]).toLowerCase(); if (!S.itemLookup.has(n)) S.itemLookup.set(n, k); }
+    }
+    return S.itemLookup.get(s.toLowerCase()) || null;
+  }
+  function itemChoices() {
+    if (!S.choices) {
+      const items = (S.deps.data && S.deps.data.items) || {};
+      S.choices = Object.entries(items).map(([k, v]) => [k, v[0]]).sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+    }
+    return S.choices;
+  }
+
+  // ---- stable hashes -------------------------------------------------------------
+  const VISUAL_ITEM_KEYS = ['HelmetItem', 'ShoulderItem', 'ChestItem', 'LegItem', 'RightItem', 'LeftItem', 'LeftBackItem', 'RightBackItem', 'UtilityItem', 'TrinketItem', 'HairItem', 'BeardItem'];
+  let hcache = null;
+  function H() {
+    const c = cat();
+    if (hcache && hcache.cat === c) return hcache.h;
+    const h = {};
+    for (const k of ['items', 'itemData', 'item', 'stack', 'quality', 'crafterName', 'crafterID', 'addedDefaultItems', 'durability', 'variant', 'worldLevel', 'equipped', 'pickedUp', 'level', 'enabled', 'piece']) h[k] = c.gsh(k);
+    h['Container.m_width'] = c.gsh('Container.m_width');
+    h['Container.m_height'] = c.gsh('Container.m_height');
+    for (const k of VISUAL_ITEM_KEYS) { h[k] = c.gsh(k); h[k + 'Quality'] = c.gsh(k + 'Quality'); }
+    hcache = { cat: c, h };
+    return h;
+  }
+  const slotHash = (slot, key) => gsh(slot + '_' + key);
+
+  // ---- known vanilla container sizes (width x height) ----------------------------
+  const VANILLA = {
+    Chest: [5, 2], piece_chest_wood: [5, 2], piece_chest_barrel: [6, 2], piece_chest: [6, 4],
+    piece_chest_blackmetal: [8, 4], piece_chest_private: [3, 2],
+    piece_gift1: [1, 1], piece_gift2: [2, 1], piece_gift3: [3, 1],
+    piece_pot1: [2, 1], piece_pot2: [3, 1], piece_pot3: [1, 1],
+    Cart: [6, 3], Karve: [2, 2], VikingShip: [6, 3], VikingShip_Ashlands: [8, 4],
+  };
+  function knownSize(stem) {
+    if (!stem) return null;
+    if (VANILLA[stem]) return VANILLA[stem];
+    if (/^piece_pot1(_|$)/.test(stem)) return [2, 1];
+    if (/^piece_pot2(_|$)/.test(stem)) return [3, 1];
+    if (/^piece_pot3(_|$)/.test(stem)) return [1, 1];
+    if (/^piece_gift1(_|$)/.test(stem)) return [1, 1];
+    if (/^piece_gift2(_|$)/.test(stem)) return [2, 1];
+    if (/^piece_gift3(_|$)/.test(stem)) return [3, 1];
+    if (/^TreasureChest_/.test(stem)) return [5, 2];
+    return null;
+  }
+  function overrideInt(z, hash) {
+    for (const bk of ['ints', 'floats']) { const v = val(z, bk, hash); if (v !== undefined && Number.isFinite(nval(v))) return Math.trunc(nval(v)); }
+    return undefined;
+  }
+  function containerDims(z, stem, items) {
+    const h = H();
+    const k = knownSize(stem);
+    let w = overrideInt(z, h['Container.m_width']), ht = overrideInt(z, h['Container.m_height']);
+    const wFile = w > 0, hFile = ht > 0;
+    if (!wFile) w = k ? k[0] : 6;
+    if (!hFile) ht = k ? k[1] : 4;
+    // One axis can be overridden on its own (e.g. piece_gift1 with only Container.m_width = 5).
+    const src = wFile && hFile ? 'file' : wFile || hFile ? 'partial' : k ? 'known' : 'assumed';
+    let mx = 0, my = 0;
+    for (const it of items) { if (Number.isFinite(it.gridX)) mx = Math.max(mx, it.gridX + 1); if (Number.isFinite(it.gridY)) my = Math.max(my, it.gridY + 1); }
+    if (src === 'assumed') { w = Math.max(w, mx); ht = Math.max(ht, my); }
+    return { w, h: ht, src, overflow: src !== 'assumed' && (mx > w || my > ht), mx, my };
+  }
+
+  // ---- scan: every item location in the file ------------------------------------
+  function standItem(z, prefix, slot) {
+    const h = H();
+    const kh = (k) => (prefix === '' ? h[k] : slotHash(slot, k));
+    const ih = prefix === '' ? h.item : kh('item');
+    let name = null;
+    const iv = val(z, 'ints', ih), sv = val(z, 'strings', ih);
+    if (iv) name = nameOfHash(iv) || hexName(iv); else if (sv) name = sv;
+    const de = val(z, 'bytes', prefix === '' ? h.itemData : kh('itemData'));
+    let it = null, readErr = null;
+    if (de && de.length > 2) {
+      try { it = BFItems().readCompact(new (BFItems().Rd)(de.subarray(1)), de[0], nameOfHash); } catch (e) { readErr = e.message; }
+    }
+    if (!name && !it) return null;
+    const plain = (bk, k) => (prefix === '' ? val(z, bk, h[k]) : (val(z, bk, kh(k)) ?? val(z, bk, h[k])));
+    const item = it || {
+      prefabName: name || '', prefabHash: iv || (name ? BFItems().hashOfName(name) : 0),
+      stack: nval(plain('ints', 'stack'), 1) || 1, quality: nval(plain('ints', 'quality'), 1) || 1,
+      durability: nval(plain('floats', 'durability'), 0) || 0, crafterName: plain('strings', 'crafterName') || '',
+      crafterID: BigInt(nval(plain('longs', 'crafterID'), 0)), variant: nval(plain('ints', 'variant'), 0) || 0,
+      worldLevel: nval(plain('ints', 'worldLevel'), 0) || 0, equipped: !!nval(plain('ints', 'equipped'), 0),
+      pickedUp: !!nval(plain('ints', 'pickedUp'), 0), customData: [], cheated: false,
+    };
+    if (name) item.prefabName = name;
+    return { item, name, hasRecord: !!(de && de.length > 2), readErr };
+  }
+
+  function dropItem(z, stem) {
+    const h = H();
+    const de = val(z, 'bytes', h.itemData);
+    let it = null, readErr = null;
+    if (de && de.length > 2) {
+      try { it = BFItems().readCompact(new (BFItems().Rd)(de.subarray(1)), de[0], nameOfHash); } catch (e) { readErr = e.message; }
+    }
+    const item = it || {
+      prefabName: stem, prefabHash: BFItems().hashOfName(stem),
+      stack: nval(val(z, 'ints', h.stack), 1) || 1, quality: nval(val(z, 'ints', h.quality), 1) || 1,
+      durability: nval(val(z, 'floats', h.durability), 0) || 0, crafterName: val(z, 'strings', h.crafterName) || '',
+      crafterID: BigInt(nval(val(z, 'longs', h.crafterID), 0)), variant: nval(val(z, 'ints', h.variant), 0) || 0,
+      worldLevel: nval(val(z, 'ints', h.worldLevel), 0) || 0, equipped: false, pickedUp: false, customData: [], cheated: false,
+    };
+    item.prefabName = stem;
+    return { item, hasRecord: !!(de && de.length > 2), readErr };
+  }
+
+  function visualItem(z, key) {
+    const iv = val(z, 'ints', gsh(key)), sv = val(z, 'strings', gsh(key));
+    let name = null;
+    if (iv) name = nameOfHash(iv) || hexName(iv); else if (sv) name = sv;
+    if (!name) return null;
+    return {
+      prefabName: name, prefabHash: iv || BFItems().hashOfName(name), stack: 1,
+      quality: nval(val(z, 'ints', gsh(key + 'Quality')), 1) || 1, durability: 0, crafterName: '', crafterID: 0n,
+      variant: 0, worldLevel: 0, equipped: false, pickedUp: false, customData: [], cheated: false,
+    };
+  }
+
+  function ovNum(z, cls, field) {
+    const hash = gsh(cls + '.' + field);
+    for (const bk of ['floats', 'ints', 'longs']) { const v = val(z, bk, hash); if (v !== undefined) return nval(v); }
+    return undefined;
+  }
+
+  function scanAll(ir) {
+    const h = H();
+    const c = cat();
+    const groups = [], byZi = new Map();
+    const wardR = (S.deps.data && S.deps.data.config && S.deps.data.config.wardRadius) || 32;
+    const wards = [];
+    for (const z of ir.zdos) {
+      const wn = z.prefabName || nameOfHash(z.prefabHash);
+      if (wn !== 'guard_stone' || !val(z, 'ints', h.enabled)) continue;
+      wards.push({ x: z.pos.x, y: z.pos.y, z: z.pos.z, r: ovNum(z, 'PrivateArea', 'm_radius') ?? wardR });
+    }
+    const standBlocked = (z, stem, isItemStand) => {
+      if (isItemStand) {
+        const o = ovNum(z, 'ItemStand', 'm_canBeRemoved');
+        if (o === 0 || (o === undefined && S.deps.data && S.deps.data.stands && S.deps.data.stands[stem] === false)) return 'locked';
+      }
+      for (const w of wards) { const dx = z.pos.x - w.x, dy = z.pos.y - w.y, dz = z.pos.z - w.z; if (dx * dx + dy * dy + dz * dz <= w.r * w.r) return 'warded'; }
+      return null;
+    };
+
+    ir.zdos.forEach((z, zi) => {
+      const stem = z.prefabName || nameOfHash(z.prefabHash) || hexName(z.prefabHash);
+      if (stem && !z.prefabName) z.prefabName = stem;
+      const comps = (stem && c.prefabComponents(stem)) || [];
+      const invBytes = val(z, 'bytes', h.items), invStr = val(z, 'strings', h.items);
+      const hasInv = !!(invBytes || invStr);
+
+      // ---- containers
+      if (comps.includes('Container')) {
+        let inv = null, err = null;
+        if (hasInv) { try { inv = BFItems().decodeInventory(invBytes || BFItems().b64dec(invStr), nameOfHash); } catch (e) { err = e.message; } }
+        const items = inv ? inv.items : [];
+        const dims = containerDims(z, stem, items);
+        const g = {
+          kind: 'container', gid: `container:${zi}`, zi, stem, pos: z.pos, rowId: zi + 1,
+          w: dims.w, h: dims.h, dimsSrc: dims.src, hasInv, items: [], warn: [], note: '', readOnly: false,
+        };
+        if (err) g.warn.push('Inventory could not be read: ' + err);
+        else if (!hasInv) {
+          g.noInv = true;
+          g.noInvTitle = val(z, 'ints', h.addedDefaultItems) === undefined
+            ? 'No inventory is stored on this object yet. The game may roll default loot when it is first opened.'
+            : 'No items are stored on this object.';
+        }
+        if (dims.overflow) g.warn.push(`items overflow the ${dims.w}×${dims.h} grid`);
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i];
+          g.items.push(makeRow(`c:${zi}:${i}`, g, { k: 'c', i }, it, { x: it.gridX, y: it.gridY }));
+        }
+        groups.push(g); byZi.set(zi, g);
+        return;
+      }
+
+      // ---- inert inventories on prefabs with no Container component
+      if (hasInv) {
+        let inv = null, err = null;
+        try { inv = BFItems().decodeInventory(invBytes || BFItems().b64dec(invStr), nameOfHash); } catch (e) { err = e.message; }
+        const g = {
+          kind: 'inert', gid: `inert:${zi}`, zi, stem, pos: z.pos, w: 0, h: 0, dimsSrc: '', hasInv: true,
+          items: [], warn: ['Inventory data on a prefab without a Container component — the game never reads it.'], note: '', readOnly: true,
+        };
+        if (err) g.warn.push('Inventory could not be read: ' + err);
+        else for (let i = 0; i < inv.items.length; i++) {
+          const it = inv.items[i];
+          g.items.push(makeRow(`c:${zi}:${i}`, g, { k: 'c', i }, it, { x: it.gridX, y: it.gridY }, { readOnly: true }));
+        }
+        groups.push(g);
+      }
+    });
+
+    // stands/drops are scanned in a second pass so the ward list is complete first
+    ir.zdos.forEach((z, zi) => {
+      const stem = z.prefabName || nameOfHash(z.prefabHash);
+      if (!stem) return;
+      const comps = cat().prefabComponents(stem) || [];
+
+      if (comps.includes('ItemStand')) {
+        const st = standItem(z, '', 0);
+        if (!st) return;
+        const why = standBlocked(z, stem, true);
+        const g = { kind: 'stand', gid: `stand:${zi}`, zi, stem, pos: z.pos, items: [], warn: [], note: why ? `${why} — shown for editing, not counted as loot` : '', readOnly: false };
+        if (st.readErr) g.warn.push('Item data could not be read: ' + st.readErr);
+        g.items.push(makeRow(`s:${zi}`, g, { k: 's' }, st.item, { slot: 'item' }, { note: why, detLock: st.hasRecord ? {} : { cheated: true, cd: true } }));
+        groups.push(g);
+        return;
+      }
+
+      if (comps.includes('ArmorStand')) {
+        const why = standBlocked(z, stem, false);
+        const g = { kind: 'armor', gid: `armor:${zi}`, zi, stem, pos: z.pos, items: [], warn: [], note: why ? `${why} — shown for editing, not counted as loot` : '', readOnly: false };
+        const seen = new Set();
+        for (let i = 0; i < 24; i++) {
+          const st = standItem(z, 'slot', i);
+          if (!st) continue;
+          seen.add(st.item.prefabName);
+          if (st.readErr) g.warn.push(`Slot ${i} item data could not be read: ${st.readErr}`);
+          g.items.push(makeRow(`a:${zi}:${i}`, g, { k: 'a', slot: i }, st.item, { slot: `slot ${i}` }, { note: why, detLock: st.hasRecord ? {} : { cheated: true, cd: true } }));
+        }
+        // Visual equipment keys repeat the numbered slots; only the ones that add an item are shown.
+        for (const key of VISUAL_ITEM_KEYS) {
+          const it = visualItem(z, key);
+          if (!it || seen.has(it.prefabName)) continue;
+          seen.add(it.prefabName);
+          g.items.push(makeRow(`v:${zi}:${key}`, g, { k: 'v', key }, it, { slot: key }, { locked: { stack: true, durability: true, crafter: true }, detLock: { variant: true, crafterID: true, worldLevel: true, equipped: true, pickedUp: true, cheated: true, cd: true }, note: why }));
+        }
+        if (g.items.length) groups.push(g);
+        return;
+      }
+
+      if (comps.includes('ItemDrop')) {
+        const dt = dropItem(z, stem);
+        const g = { kind: 'drop', gid: `drop:${zi}`, zi, stem, pos: z.pos, items: [], warn: [], note: '', readOnly: false };
+        if (dt.readErr) g.warn.push('Item data could not be read: ' + dt.readErr);
+        g.items.push(makeRow(`d:${zi}`, g, { k: 'd' }, dt.item, { slot: '—' }, { locked: { prefab: true }, detLock: dt.hasRecord ? {} : { cheated: true, cd: true } }));
+        groups.push(g);
+      }
+    });
+
+    // group order: containers first, then stands/drops/inert; keep file order within each kind
+    const order = { container: 0, stand: 1, armor: 1, drop: 2, inert: 3 };
+    groups.sort((a, b) => (order[a.kind] - order[b.kind]) || (a.zi - b.zi));
+    return { groups, byZi, ir };
+  }
+
+  function makeRow(key, group, ref, it, slot, opts) {
+    opts = opts || {};
+    return {
+      key, group, zi: group.zi, ref, isNew: false, isContainer: group.kind === 'container',
+      prefab: it.prefabName || '', prefabHash: it.prefabHash || 0, stack: it.stack ?? 1, quality: it.quality ?? 1,
+      durability: it.durability ?? 0, crafterName: it.crafterName || '', crafterID: it.crafterID ?? 0n,
+      variant: it.variant ?? 0, worldLevel: it.worldLevel ?? 0, equipped: !!it.equipped, pickedUp: !!it.pickedUp,
+      cheated: !!it.cheated, customData: it.customData || [], gridX: it.gridX, gridY: it.gridY,
+      slot: slot && typeof slot === 'object' ? (slot.slot !== undefined ? slot.slot : '') : slot, readOnly: !!opts.readOnly || !!group.readOnly, locked: opts.locked || {}, detLock: opts.detLock || {}, note: opts.note || '',
+    };
+  }
+
+  function scan(ir) {
+    if (S.scanCache && S.scanCache.ir === ir) return S.scanCache.data;
+    const data = scanAll(ir);
+    S.scanCache = { ir, data };
+    return data;
+  }
+
+  // ---- pending edits -------------------------------------------------------------
+  function tOf(row) { const p = S.pending.get(row.key); return p ? p.t : {}; }
+  const isNum = (s) => /^\d+$/.test(String(s).trim());
+  function baseOf(row) { return row.isNew ? row.base : row; }
+  function isRemoved(row) { const p = S.pending.get(row.key); return !!(p && p.remove); }
+  const isDetailField = (f) => /^(variant|crafterID|worldLevel|equipped|pickedUp|cheated)$/.test(f) || f.startsWith('cd:');
+  function fieldLocked(row, f) {
+    if (row.readOnly || isRemoved(row)) return true;
+    if (row.locked && row.locked[f]) return true;
+    if (row.detLock && (row.detLock[f] || (f.startsWith('cd:') && row.detLock.cd))) return true;
+    if (!row.isContainer && (f === 'gridX' || f === 'gridY')) return true;
+    return false;
+  }
+
+  // ---- pending container size ----------------------------------------------------
+  // grid size typed in the group header; values are the raw texts, so an empty or non-numeric box can be reported
+  function sizeOf(g) { return S.size.get(g.gid) || null; }
+  function dimsOf(g) {                       // usable size for rendering and slot checks: pending when valid, else the file size
+    const p = sizeOf(g);
+    const axis = (a) => { const raw = p && p[a] !== undefined ? String(p[a]).trim() : ''; return isNum(raw) && +raw >= 1 && +raw <= 255 ? +raw : g[a]; };
+    return { w: axis('w'), h: axis('h') };
+  }
+  function evalSize(g) {
+    const p = sizeOf(g);
+    const out = { fields: {}, bad: {}, changed: !!(p && (p.w !== undefined || p.h !== undefined)), w: g.w, h: g.h };
+    if (!p) return out;
+    for (const a of ['w', 'h']) {
+      if (p[a] === undefined) continue;
+      const raw = String(p[a]).trim(), what = a === 'w' ? 'width' : 'height';
+      if (!isNum(raw)) out.bad[a] = `${what} must be a whole number`;
+      else if (+raw < 1 || +raw > 255) out.bad[a] = `${what} must be 1..255`;
+      else out.fields[a] = +raw;
+    }
+    out.w = out.fields.w !== undefined ? out.fields.w : g.w;
+    out.h = out.fields.h !== undefined ? out.fields.h : g.h;
+    if (!out.bad.w && !out.bad.h) {
+      for (const r of rowsForGroup(g)) {
+        if (!r.isContainer || isRemoved(r)) continue;
+        const v = cellValues(r), x = Number(v.gridX), y = Number(v.gridY);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;      // the row itself reports the bad slot
+        if (x >= out.w && !out.bad.w) out.bad.w = `the item at ${x},${y} needs a wider grid`;
+        if (y >= out.h && !out.bad.h) out.bad.h = `the item at ${x},${y} needs a taller grid`;
+      }
+    }
+    return out;
+  }
+  function setSize(g, axis, text) {
+    let p = S.size.get(g.gid);
+    if (!p) { p = {}; S.size.set(g.gid, p); }
+    const raw = String(text).trim();
+    if (raw === '' || raw === String(g[axis])) delete p[axis]; else p[axis] = raw;
+    if (p.w === undefined && p.h === undefined) S.size.delete(g.gid);
+  }
+
+  // what the typed texts mean: fields = values that really change, bad = blocking problems, warn = allowed but suspicious
+  function evalEdit(row, t) {
+    const out = { fields: {}, bad: {}, warn: {} };
+    const g = row.group, base = baseOf(row);
+    const touched = (f) => row.isNew || t[f] !== undefined;
+    const pick = (f, d) => (t[f] !== undefined ? t[f] : d);
+
+    if (row.isContainer) {
+      const dims = dimsOf(g);
+      const sx = String(pick('gridX', base.gridX ?? 0)).trim(), sy = String(pick('gridY', base.gridY ?? 0)).trim();
+      if (!isNum(sx) || !isNum(sy)) {
+        if (t.gridX !== undefined) out.bad.gridX = 'slot x must be a whole number';
+        if (t.gridY !== undefined) out.bad.gridY = 'slot y must be a whole number';
+        if (row.isNew) { out.bad.gridX = out.bad.gridX || 'slot x must be a whole number'; out.bad.gridY = out.bad.gridY || 'slot y must be a whole number'; }
+      } else {
+        const x = +sx, y = +sy;
+        const inX = x >= 0 && x < dims.w, inY = y >= 0 && y < dims.h;
+        if (!inX) { if (touched('gridX')) out.bad.gridX = `slot x must be 0..${dims.w - 1}`; else out.warn.gridX = `slot x is outside the grid (0..${dims.w - 1})`; }
+        if (!inY) { if (touched('gridY')) out.bad.gridY = `slot y must be 0..${dims.h - 1}`; else out.warn.gridY = `slot y is outside the grid (0..${dims.h - 1})`; }
+        if (inX && inY) {
+          if (x !== (base.gridX ?? 0)) out.fields.gridX = x;
+          if (y !== (base.gridY ?? 0)) out.fields.gridY = y;
+        }
+      }
+    }
+
+    if (!row.readOnly && !(row.locked && row.locked.prefab)) {
+      const raw = String(pick('prefab', base.prefab || '')).trim();
+      if (!raw) { if (touched('prefab') || row.isNew) out.bad.prefab = 'pick an item'; }
+      else {
+        const r = resolveItem(raw);
+        if (r) { if (r !== base.prefab) out.fields.prefab = r; }
+        else if (touched('prefab')) out.bad.prefab = 'unknown item (type a prefab name or the English item name)';
+        else out.warn.prefab = `unresolved prefab (${raw})`;
+      }
+    }
+
+    const prefab = out.fields.prefab !== undefined ? out.fields.prefab : (base.prefab || '');
+
+    if (!row.readOnly && !(row.locked && row.locked.stack)) {
+      const s = String(pick('stack', base.stack ?? 1)).trim();
+      if (!isNum(s) || +s < 1 || +s > 65535) { if (touched('stack')) out.bad.stack = 'stack must be a whole number 1..65535'; else out.warn.stack = 'stack is outside 1..65535'; }
+      else {
+        if (+s !== base.stack || row.isNew && +s !== 1) out.fields.stack = +s;
+        const mx = maxStack(prefab);
+        if (mx > 1 && +s > mx) out.warn.stack = `above this item's max stack (${mx})`;
+      }
+    }
+
+    if (!row.readOnly && !(row.locked && row.locked.quality)) {
+      const s = String(pick('quality', base.quality ?? 1)).trim();
+      if (!isNum(s) || +s < 1 || +s > 65535) { if (touched('quality')) out.bad.quality = 'quality must be a whole number 1..65535'; else out.warn.quality = 'quality is outside 1..65535'; }
+      else {
+        if (+s !== base.quality || row.isNew && +s !== 1) out.fields.quality = +s;
+      }
+    }
+
+    if (!row.readOnly && !(row.locked && row.locked.durability)) {
+      const s = String(pick('durability', base.durability ?? 0)).trim();
+      const v = parseFloat(s);
+      if (!Number.isFinite(v) || v < 0) { if (touched('durability')) out.bad.durability = 'durability must be 0 or more'; else out.warn.durability = 'durability is not a valid number'; }
+      else {
+        if (Math.abs(v - (base.durability ?? 0)) > 0.005) out.fields.durability = v;
+        const q = out.fields.quality !== undefined ? out.fields.quality : (base.quality ?? 1);
+        const md = maxDur(prefab, q);
+        if (md != null && v > md + 0.5) out.warn.durability = `above the max for quality ${q} (${Math.round(md)})`;
+      }
+    }
+
+    if (!row.readOnly && !(row.locked && row.locked.crafter)) {
+      const s = String(pick('crafter', base.crafterName || ''));
+      if (s !== (base.crafterName || '')) out.fields.crafterName = s;
+    }
+
+    // ---- details row: variant, crafter id, world level, flags and itemdata values
+    if (!row.readOnly && row.ref.k !== 'v') {
+      const detOpen = (f) => !(row.detLock && (row.detLock[f] || (f.startsWith('cd:') && row.detLock.cd)));
+      const whole = (s) => /^-?\d+$/.test(s);
+
+      if (detOpen('variant')) {
+        const s = String(pick('variant', base.variant ?? 0)).trim();
+        if (!whole(s) || +s < -2147483648 || +s > 2147483647) { if (touched('variant')) out.bad.variant = 'variant must be a whole number'; }
+        else if (+s !== (base.variant ?? 0)) out.fields.variant = +s;
+      }
+      if (detOpen('crafterID')) {
+        const s = String(pick('crafterID', String(base.crafterID ?? 0))).trim();
+        let bv = null;
+        if (/^\d+$/.test(s)) { try { bv = BigInt(s); } catch (e) { bv = null; } }
+        if (bv === null || bv > 9223372036854775807n) { if (touched('crafterID')) out.bad.crafterID = 'crafter id must be a whole number 0 or more'; }
+        else if (bv !== BigInt(base.crafterID ?? 0)) out.fields.crafterID = bv;
+      }
+      if (detOpen('worldLevel')) {
+        const s = String(pick('worldLevel', base.worldLevel ?? 0)).trim();
+        if (!isNum(s) || +s > 255) { if (touched('worldLevel')) out.bad.worldLevel = 'world level must be a whole number 0..255'; }
+        else if (+s !== (base.worldLevel ?? 0)) out.fields.worldLevel = +s;
+      }
+      for (const f of ['equipped', 'pickedUp', 'cheated']) {
+        if (!detOpen(f)) continue;
+        const s = String(pick(f, base[f] ? '1' : '0')).trim().toLowerCase();
+        const b = /^(1|true|yes|y)$/.test(s) ? true : /^(0|false|no|n|)$/.test(s) ? false : null;
+        if (b === null) { if (touched(f)) out.bad[f] = `${f === 'pickedUp' ? 'picked up' : f} must be yes or no`; }
+        else if (b !== !!base[f]) out.fields[f] = b;
+      }
+      if (detOpen('cd')) {
+        for (const c of (row.customData || [])) {
+          const f = 'cd:' + c.key;
+          if (t[f] === undefined) continue;
+          if (String(t[f]) !== String(c.value)) out.fields[f] = String(t[f]);
+        }
+      }
+    }
+    return out;
+  }
+
+  const slotKey = (row) => {
+    const g = row.group, base = baseOf(row), t = tOf(row);
+    const x = t.gridX !== undefined ? t.gridX : base.gridX, y = t.gridY !== undefined ? t.gridY : base.gridY;
+    return `${g.zi}:${String(x).trim()},${String(y).trim()}`;
+  };
+  function dupKeys(scanData) {
+    const dup = new Set();
+    for (const g of scanData.groups) {
+      if (g.kind !== 'container') continue;
+      const used = new Map();
+      for (const r of rowsForGroup(g)) {
+        if (!r.isContainer || isRemoved(r)) continue;
+        const k = slotKey(r);
+        used.set(k, (used.get(k) || 0) + 1);
+      }
+      for (const [k, n] of used) if (n > 1) dup.add(k);
+    }
+    return dup;
+  }
+
+  function baseValues(row) {
+    const b = baseOf(row);
+    const o = {
+      gridX: String(b.gridX ?? 0), gridY: String(b.gridY ?? 0), prefab: b.prefab || '',
+      stack: String(b.stack ?? 1), quality: String(b.quality ?? 1), durability: String(b.durability ?? 0),
+      crafter: b.crafterName || '', variant: String(b.variant ?? 0), crafterID: String(b.crafterID ?? 0),
+      worldLevel: String(b.worldLevel ?? 0), equipped: b.equipped ? '1' : '0',
+      pickedUp: b.pickedUp ? '1' : '0', cheated: b.cheated ? '1' : '0',
+    };
+    for (const c of (b.customData || [])) o['cd:' + c.key] = c.value;
+    return o;
+  }
+  function cellValues(row) {
+    const base = baseValues(row), t = tOf(row), o = {};
+    for (const k of Object.keys(base)) o[k] = t[k] !== undefined ? t[k] : base[k];
+    for (const k of Object.keys(t)) if (o[k] === undefined) o[k] = t[k];
+    return o;
+  }
+
+  function dump(v) {
+    const b = S.deps.BFC;
+    if (b && b.shortestFloat32) { try { return String(b.shortestFloat32(Number(v))); } catch (e) { /* fall through */ } }
+    return String(Math.round(Number(v) * 1000) / 1000);
+  }
+
+  function cellView(row, f) {
+    const t = tOf(row), ev = evalEdit(row, t), v = cellValues(row);
+    const bad = ev.bad[f] || ((f === 'gridX' || f === 'gridY') && S.dup.has(slotKey(row)) && (row.isNew || t.gridX !== undefined || t.gridY !== undefined));
+    const cls = isRemoved(row) ? 'rem' : bad ? 'bad' : f in t ? 'mod' : ev.warn[f] ? 'warn' : '';
+    const locked = fieldLocked(row, f);
+    const g = row.group;
+    if (f === 'gridX' || f === 'gridY') {
+      const axis = f === 'gridX' ? 'x' : 'y';
+      const dims = dimsOf(g);
+      const lim = f === 'gridX' ? dims.w : dims.h;
+      const shown = row.isContainer ? escHtml(String(v[f]).trim()) : '<span class="dim">—</span>';
+      const title = locked ? 'This item has no grid slot' : bad ? (ev.bad[f] || 'this slot is used twice') : `Click to edit slot ${axis} (0..${lim - 1})`;
+      return { cls: locked ? 'locked' : cls, html: shown, title };
+    }
+    if (f === 'prefab') {
+      let shown;
+      const typed = String(v.prefab).trim();
+      if (!typed) shown = '<span class="dim">pick an item</span>';
+      else if (ev.bad.prefab) shown = escHtml(typed) + ' ?';
+      else shown = escHtml(itemName(typed));
+      if (row.ref.k === 'a' || row.ref.k === 'v') shown += ` <span class="dim iv-slot">${escHtml(row.ref.k === 'v' ? row.ref.key : 'slot ' + row.ref.slot)}</span>`;
+      const info = itemInfo(String(v.prefab).trim());
+      const hint = info ? `\n${info[1] || 'item'} · max stack ${maxStack(v.prefab)} · max quality ${maxQuality(v.prefab)}` : '';
+      return { cls: locked ? 'locked' : cls, html: shown, title: locked ? 'The item of a dropped item is its prefab and cannot be changed here' : (ev.bad.prefab || `Click to edit (${v.prefab || 'none'})${hint}`) };
+    }
+    if (f === 'crafter') return { cls: locked ? 'locked' : cls, html: tmpHtml(String(v.crafter)), title: locked ? 'Read-only here' : 'Click to edit the crafter tag (raw markup)' };
+    const shown = f === 'durability' ? dump(v[f]) : escHtml(String(v[f]).trim());
+    let title = '';
+    if (f === 'stack') title = ev.bad.stack || ev.warn.stack || `Max stack ${maxStack(v.prefab)}`;
+    else if (f === 'quality') title = ev.bad.quality || ev.warn.quality || `Max quality ${maxQuality(v.prefab)}`;
+    else if (f === 'durability') { const md = maxDur(v.prefab, Number(v.quality) || 1); title = ev.bad.durability || ev.warn.durability || (md == null ? 'This item has no durability' : `Max at quality ${v.quality}: ${Math.round(md)}`); }
+    return { cls: locked ? 'locked' : cls, html: shown, title: locked ? 'Read-only here' : title };
+  }
+
+  const cellHtml = (row, f) => {
+    const v = cellView(row, f);
+    const numeric = f === 'stack' || f === 'quality' || f === 'durability' || f === 'gridX' || f === 'gridY';
+    return `<td class="iv-c${numeric ? ' n' : ''}${v.cls ? ' ' + v.cls : ''}" data-f="${f}" title="${escHtml(v.title)}"${f === 'crafter' ? ` style="font-family:'Averia Sans Libre','Averia Sans',sans-serif"` : ''}>${v.html}</td>`;
+  };
+  function paintCell(td, row, f) {
+    const v = cellView(row, f);
+    const numeric = f === 'stack' || f === 'quality' || f === 'durability' || f === 'gridX' || f === 'gridY';
+    td.className = `iv-c${numeric ? ' n' : ''}${v.cls ? ' ' + v.cls : ''}`;
+    td.title = v.title; td.innerHTML = v.html;
+  }
+
+  function rowsForGroup(g) {
+    const out = g.items.slice();
+    for (const [key, p] of S.pending) if (p.isNew && p.gid === g.gid) out.push(newRow(key, p, g));
+    return out;
+  }
+  function newRow(key, p, g) {
+    const b = p.base;
+    return {
+      key, group: g, zi: p.zi, ref: { k: 'c', i: -1 }, isNew: true, isContainer: true,
+      base: b, prefab: b.prefab, prefabHash: 0, stack: b.stack, quality: b.quality,
+      durability: b.durability, crafterName: b.crafterName, crafterID: b.crafterID ?? 0n, variant: b.variant ?? 0,
+      worldLevel: b.worldLevel ?? 0, equipped: !!b.equipped, pickedUp: !!b.pickedUp, cheated: !!b.cheated,
+      customData: b.customData || [], gridX: b.gridX, gridY: b.gridY,
+      slot: 'new', readOnly: false, locked: {}, detLock: {}, note: '',
+    };
+  }
+  function buildRecs(scanData) {
+    const recs = new Map();
+    for (const g of scanData.groups) {
+      for (const r of g.items) recs.set(r.key, r);
+      for (const [key, p] of S.pending) if (p.isNew && p.gid === g.gid) recs.set(key, newRow(key, p, g));
+    }
+    return recs;
+  }
+
+  function addDraft(ctx, gid) {
+    const scanData = scan(ctx.ir);
+    const g = scanData.groups.find((x) => x.gid === gid);
+    if (!g || g.kind !== 'container' || g.readOnly) return;
+    const dims = dimsOf(g);
+    const badSize = evalSize(g);
+    if (badSize.bad.w || badSize.bad.h) { S.msg = 'Fix the container size first: ' + (badSize.bad.w || badSize.bad.h) + '.'; S.msgIr = idOf(ctx.ir); ctx.rerender(); return; }
+    const used = new Set();
+    for (const r of buildRecs(scanData).values()) {
+      if (!r.isContainer || r.zi !== g.zi || isRemoved(r)) continue;
+      const v = cellValues(r);
+      const x = Number(String(v.gridX).trim()), y = Number(String(v.gridY).trim());
+      if (Number.isFinite(x) && Number.isFinite(y)) used.add(x + ',' + y);
+    }
+    let sx = -1, sy = -1;
+    for (let y = 0; y < dims.h && sx < 0; y++) for (let x = 0; x < dims.w; x++) if (!used.has(x + ',' + y)) { sx = x; sy = y; break; }
+    if (sx < 0) { S.msg = 'That container is full.'; S.msgIr = idOf(ctx.ir); ctx.rerender(); return; }
+    const key = `new:${g.zi}:${S.seq++}`;
+    S.pending.set(key, { isNew: true, zi: g.zi, gid: g.gid, base: {
+      prefab: '', stack: 1, quality: 1, durability: 0, crafterName: '', crafterID: 0n, variant: 0, worldLevel: 0,
+      equipped: false, pickedUp: false, cheated: false, customData: [], gridX: sx, gridY: sy,
+    }, t: {} });
+    S.open.add(key);
+    S.msg = '';
+    ctx.rerender();
+  }
+
+  // ---- rendering -----------------------------------------------------------------
+  function detChip(row, f, shown, title) {
+    const locked = fieldLocked(row, f);
+    const bad = evalEdit(row, tOf(row)).bad[f];
+    const cls = locked ? 'locked' : bad ? 'bad' : tOf(row)[f] !== undefined ? 'mod' : '';
+    const tip = bad || (locked ? (row.detLock && row.detLock[f] ? 'This item has no stored item data record, so this field cannot be set here' : 'Read-only here') : title);
+    return `<span class="iv-dv${cls ? ' ' + cls : ''}" data-f="${escHtml(f)}" title="${escHtml(tip)}">${shown}</span>`;
+  }
+  function detBool(row, f, label) {
+    const v = cellValues(row)[f] === '1';
+    const locked = fieldLocked(row, f);
+    return `<b>${label}</b> <span class="iv-dv iv-dvt${locked ? ' locked' : ''}${v ? ' on' : ''}" data-f="${f}" data-toggle="1" title="${escHtml(locked ? 'Read-only here' : 'Click to toggle ' + label)}">${v ? 'yes' : 'no'}</span>`;
+  }
+  function detailsHtml(row) {
+    const v = cellValues(row);
+    const parts = [];
+    if (row.slot && (row.ref.k === 'a' || row.ref.k === 'v')) parts.push(`<b>${row.ref.k === 'v' ? 'key' : 'slot'}</b> ${escHtml(String(row.slot).replace(/^slot /, ''))}`);
+    parts.push(`<b>variant</b> ${detChip(row, 'variant', escHtml(String(v.variant)), 'Variant index of the prefab (e.g. hair style). Click to edit.')}`);
+    parts.push(`<b>crafter id</b> ${detChip(row, 'crafterID', escHtml(String(v.crafterID)), 'Steam / player id stored with the crafter name. Click to edit.')}`);
+    parts.push(`<b>world level</b> ${detChip(row, 'worldLevel', escHtml(String(v.worldLevel)), 'World level stored on the item (0..255). Click to edit.')}`);
+    parts.push(detBool(row, 'equipped', 'equipped'));
+    parts.push(detBool(row, 'pickedUp', 'picked up'));
+    parts.push(detBool(row, 'cheated', 'cheated'));
+    if (isRemoved(row)) parts.push('<span class="warn">will be removed</span>');
+    if (row.note) parts.push(`<span class="warn">${escHtml(row.note)}</span>`);
+    const cds = row.customData || [];
+    const custom = cds.length ? `<div class="iv-cd"><b>itemdata</b> ` + cds.map((c) => {
+      const f = 'cd:' + c.key;
+      return `<code>${escHtml(c.key)}</code>=${detChip(row, f, escHtml(String(v[f] ?? c.value)), 'Click to edit this itemdata value')}`;
+    }).join(' · ') + '</div>' : '';
+    return `<div class="iv-det-in">${parts.join(' · ')}${custom}</div>`;
+  }
+
+  function groupHtml(g) {
+    const rows = rowsForGroup(g);
+    const newCount = rows.filter((r) => r.isNew).length;
+    const gone = rows.filter((r) => isRemoved(r)).length;
+    const used = rows.length - gone;
+    const dims = dimsOf(g);
+    const cap = g.kind === 'container' ? dims.w * dims.h : null;
+    const size = g.kind === 'container' ? evalSize(g) : null;
+    const sizeBad = !!(size && (size.bad.w || size.bad.h));
+    const bits = [];
+    if (g.kind === 'container') {
+      const p = sizeOf(g);
+      const dim = (a) => `<span class="iv-dim${p && p[a] !== undefined ? (size.bad[a] ? ' bad' : ' mod') : ''}" data-gid="${escHtml(g.gid)}" data-axis="${a}" title="${escHtml(size.bad[a] || `Click to edit the grid ${a === 'w' ? 'width' : 'height'} (1..255)`)}">${dims[a === 'w' ? 'w' : 'h']}</span>`;
+      const srcNote = p ? ' (size edited)' : g.dimsSrc === 'assumed' ? ' (size assumed)' : g.dimsSrc === 'file' ? ' (size from file)' : g.dimsSrc === 'partial' ? ' (size partly from file)' : '';
+      bits.push(`<span class="badge">#${g.rowId}</span><b>${escHtml(g.stem)}</b>`);
+      bits.push(`<span class="dim">at ${Math.round(g.pos.x)}, ${Math.round(g.pos.y)}, ${Math.round(g.pos.z)} · ${used}/${cap} slots · ${dim('w')}×${dim('h')}${srcNote}</span>`);
+      if (gone) bits.push(`<span class="badge">${gone} to remove</span>`);
+      if (g.noInv && !newCount) bits.push(`<span class="dim iv-noinvt" title="${escHtml(g.noInvTitle || '')}">· no stored inventory</span>`);
+    } else {
+      const label = g.kind === 'stand' ? 'Item stand' : g.kind === 'armor' ? 'Armor stand' : g.kind === 'drop' ? 'Dropped item' : 'Inert inventory';
+      bits.push(`<span class="badge">${escHtml(label)}</span><b>${escHtml(g.stem)}</b><span class="dim">at ${Math.round(g.pos.x)}, ${Math.round(g.pos.y)}, ${Math.round(g.pos.z)} · ${used} item${used === 1 ? '' : 's'}</span>`);
+    }
+    if (g.note) bits.push(`<span class="badge warn">${escHtml(g.note)}</span>`);
+    for (const w of g.warn) bits.push(`<span class="badge warn" title="${escHtml(w)}">${escHtml(w.length > 70 ? w.slice(0, 67) + '…' : w)}</span>`);
+    if (sizeBad) bits.push(`<span class="badge warn" title="${escHtml(size.bad.w || size.bad.h)}">grid size: ${escHtml(size.bad.w || size.bad.h)}</span>`);
+    if (g.kind === 'container' && !g.readOnly) {
+      const full = used >= cap || sizeBad;
+      const tip = sizeBad ? 'Fix the container size first' : full ? `This container has no free slot (${used}/${cap}); make the grid bigger to add more` : 'Add an item to the first free slot';
+      bits.push(`<button class="btn btn-sm iv-add" data-gid="${escHtml(g.gid)}"${full ? ' disabled' : ''} title="${escHtml(tip)}">+ Add item</button>`);
+    }
+    return `<tr class="iv-grp"><td colspan="9"><div class="iv-grp-in">${bits.join('')}</div></td></tr>` + rows.map(rowHtml).join('');
+  }
+
+  function rowHtml(row) {
+    const cells = ['gridX', 'gridY', 'prefab', 'stack', 'quality', 'durability', 'crafter'].map((f) => cellHtml(row, f)).join('');
+    const open = S.open.has(row.key), rem = isRemoved(row);
+    const rm = row.isContainer
+      ? `<td class="iv-rm"><button class="btn btn-sm iv-del" data-key="${escHtml(row.key)}" title="${escHtml(rem ? 'Keep this item in the container' : row.isNew ? 'Discard this new item' : 'Remove this item from the container (applied with Apply to loaded file)')}">${rem ? '↺' : '✕'}</button></td>`
+      : '<td class="iv-rm"></td>';
+    return `<tr class="iv-row${row.isNew ? ' iv-new' : ''}${rem ? ' iv-rem' : ''}" data-key="${escHtml(row.key)}">${cells}<td class="iv-dt"><button class="btn btn-sm iv-tog" data-key="${escHtml(row.key)}" title="Show variant, crafter id, world level, equipped, picked up, cheated and itemdata">${open ? '▾' : '▸'}</button></td>${rm}</tr>` +
+      (open ? `<tr class="iv-det"><td colspan="9">${detailsHtml(row)}</td></tr>` : '');
+  }
+
+  function pendingCounts() {
+    let n = 0, bad = 0;
+    for (const [key, p] of S.pending) {
+      const r = S.recs.get(key);
+      if (!r) { n++; bad++; continue; }
+      if (p.remove) { n++; continue; }
+      const ev = evalEdit(r, p.t);
+      if (p.isNew || Object.keys(ev.fields).length) n++;
+      if (Object.keys(ev.bad).length) bad++;
+    }
+    for (const [gid, p] of S.size) {
+      const g = S.scanCache && S.scanCache.data && S.scanCache.data.groups.find((x) => x.gid === gid);
+      if (!g || (p.w === undefined && p.h === undefined)) continue;
+      const ev = evalSize(g);
+      n++;
+      if (Object.keys(ev.bad).length) bad++;
+    }
+    return { n, bad };
+  }
+
+  function hasPending() { return S.pending.size > 0 || S.size.size > 0; }
+
+  function html(ctx) {
+    if (!ctx.ir) return `<p class="dim">Load a Rewind or blueprint to see and edit every item in it.</p>`;
+    const irId = idOf(ctx.ir);
+    if (S.pendingIr !== irId) { S.pending.clear(); S.size.clear(); S.open.clear(); S.pendingIr = irId; }
+    const scanData = scan(ctx.ir);
+    S.recs = buildRecs(scanData);
+    S.dup = dupKeys(scanData);
+
+    const groups = scanData.groups;
+    let nContainers = 0, nContainerItems = 0, nStandItems = 0, nDrops = 0, nInert = 0;
+    for (const g of groups) {
+      if (g.kind === 'container') { nContainers++; nContainerItems += g.items.length; }
+      else if (g.kind === 'stand' || g.kind === 'armor') nStandItems += g.items.length;
+      else if (g.kind === 'drop') nDrops += g.items.length;
+      else if (g.kind === 'inert') nInert += g.items.length;
+    }
+    const topUndo = S.undo[S.undo.length - 1];
+    const msg = S.msgIr === irId ? S.msg : '';
+    const bar = `<style>
+      .iv-c{cursor:text;position:relative}.iv-c:hover{background:var(--surface2)}.iv-c.locked{cursor:default}.iv-c.locked:hover{background:none}
+      .iv-c.mod{box-shadow:inset 0 -2px 0 var(--accent)}.iv-c.bad{box-shadow:inset 0 -2px 0 var(--err);color:var(--err)}.iv-c.warn{box-shadow:inset 0 -2px 0 var(--warn)}
+      .iv-c input.iv-ed{position:absolute;left:0;top:0;width:100%;height:100%;min-width:0;box-sizing:border-box;margin:0;padding:0 6px;border:0;border-radius:0;outline:1px solid var(--warn);background:var(--surface);color:var(--text);font:inherit;line-height:inherit}
+      .iv-dim{display:inline-block;position:relative;cursor:text;border-bottom:1px dashed var(--border);padding:0 1px}.iv-dim:hover{color:var(--text)}
+      .iv-dim.mod{border-bottom-color:var(--accent);color:var(--accent)}.iv-dim.bad{border-bottom-color:var(--err);color:var(--err)}
+      .iv-dv{position:relative;display:inline-block;min-width:10px;padding:0 3px;border-bottom:1px dashed var(--border);cursor:text;color:var(--text)}
+      .iv-dv:hover{background:var(--surface2)}.iv-dv.mod{border-bottom-color:var(--accent)}.iv-dv.bad{border-bottom-color:var(--err);color:var(--err)}
+      .iv-dv.locked{cursor:default;border-bottom-color:transparent;color:var(--text2)}
+      .iv-dvt{cursor:pointer}.iv-dvt.on{color:var(--accent)}
+      .iv-dv input.iv-ed{position:absolute;left:0;top:0;width:100%;height:100%;min-width:80px;box-sizing:border-box;margin:0;padding:0 4px;border:0;border-radius:3px;outline:1px solid var(--warn);background:var(--surface);color:var(--text);font:inherit;line-height:inherit}
+      .iv-rm{width:40px;text-align:center}.iv-rm .btn{opacity:.7;padding:1px 6px}.iv-rm .btn:hover{opacity:1}
+      tr.iv-rem td.iv-c{opacity:.5;text-decoration:line-through}
+      .iv-add[disabled]{opacity:.45;cursor:not-allowed}
+      .iv-sug{position:fixed;z-index:1000;max-height:280px;overflow-y:auto;overflow-x:hidden;max-width:calc(100vw - 16px);box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.45);font-size:12.5px}
+      .iv-sug div{padding:3px 10px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.iv-sug div.on,.iv-sug div:hover{background:var(--surface2)}.iv-sug b{font-weight:600;color:var(--text)}.iv-sug span{margin-left:12px;color:var(--text2)}
+      .iv-grp td{background:var(--surface2);padding:7px 8px}.iv-grp .btn{margin-left:4px}
+      .iv-grp-in{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px}
+      .iv-grp-in .badge{margin-right:0}
+      .iv .badge.warn{background:#3a2c0c;color:var(--warn);border:1px solid rgba(251,191,36,.45)}
+      .iv-slot{font-size:11px;margin-left:6px}
+      .iv-row.iv-new td{background:rgba(124,140,248,.08)}
+      .iv-dt{width:34px;text-align:center}.iv-det td{background:var(--surface);padding:6px 12px 10px 28px}.iv-det-in{color:var(--text2);font-size:12.5px}.iv-cd{margin-top:4px}.iv-cd code{color:var(--text)}
+    </style>
+    <div id="iv-pending" class="status info" style="display:none"><span id="iv-pending-n"></span><button class="btn btn-sm" id="iv-apply">Apply to loaded file</button> <button class="btn btn-sm" id="iv-discard">Discard</button></div>
+    ${msg ? `<div class="status info">${escHtml(msg)}</div>` : ''}
+    <div class="kv"><b>Every item in the file</b>: ${num(nContainerItems)} in ${num(nContainers)} container(s) · ${num(nStandItems)} on item/armor stands · ${num(nDrops)} dropped · ${num(nInert)} in inert inventories.
+      <span class="dim">Rows on warded or locked stands are listed here too; they are just not counted as loot.</span></div>
+    <div class="tools"><span class="dim">Click a slot, item, stack, quality, durability or crafter tag to edit it; open ▸ for variant, crafter id, world level, the flags and itemdata. Click the grid size in a container header to change it, ✕ to remove a row. Edits auto-apply when you convert & download.</span>
+      <button class="btn btn-sm" id="iv-undo" ${topUndo && ctx.ir === topUndo.now ? '' : 'disabled'}>Undo last apply</button></div>
+    <div class="scroll"><table class="hist iv"><thead><tr><td class="n">x</td><td class="n">y</td><td>item</td><td class="n">stack</td><td class="n">quality</td><td class="n">durability</td><td>crafter tag</td><td></td><td></td></tr></thead><tbody>
+      ${groups.length ? groups.map(groupHtml).join('') : '<tr><td colspan="9" class="dim">No item data in this file.</td></tr>'}
+    </tbody></table></div>`;
+    return bar;
+  }
+
+  // ---- wire ----------------------------------------------------------------------
+  function wireDetRows(ctx, scope) {
+    scope.querySelectorAll('.iv-dv').forEach((el) => {
+      const det = el.closest('tr.iv-det');
+      const tr = det && det.previousElementSibling;
+      const row = tr && S.recs.get(tr.dataset.key);
+      if (!row) return;
+      el.onclick = () => {
+        if (el.dataset.toggle) toggleField(ctx, row, el.dataset.f);
+        else startEdit(ctx, el, row, el.dataset.f);
+      };
+    });
+  }
+
+  function wire(ctx) {
+    const $ = (id) => document.getElementById(id);
+    document.querySelectorAll('td.iv-c').forEach((td) => { td.onclick = () => startEdit(ctx, td); });
+    document.querySelectorAll('.iv-add').forEach((b) => { b.onclick = () => addDraft(ctx, b.dataset.gid); });
+    document.querySelectorAll('.iv-tog').forEach((b) => {
+      b.onclick = () => { const k = b.dataset.key; if (S.open.has(k)) S.open.delete(k); else S.open.add(k); ctx.rerender(); };
+    });
+    document.querySelectorAll('.iv-dim').forEach((el) => { el.onclick = () => startSizeEdit(ctx, el); });
+    document.querySelectorAll('.iv-del').forEach((b) => { b.onclick = () => toggleRemove(ctx, b.dataset.key); });
+    wireDetRows(ctx, document);
+    const ap = $('iv-apply'); if (ap) ap.onclick = () => { const r = applyPending(ctx); if (!r.ok) { S.msg = r.msg; S.msgIr = idOf(ctx.ir); ctx.rerender(); } };
+    const dc = $('iv-discard'); if (dc) dc.onclick = () => { S.pending.clear(); S.size.clear(); S.open.clear(); S.msg = ''; S.msgIr = null; ctx.rerender(); };
+    const un = $('iv-undo');
+    if (un) un.onclick = () => { const top = S.undo[S.undo.length - 1]; if (top && ctx.ir === top.now) { S.undo.pop(); S.msg = 'Item edits undone.'; S.msgIr = idOf(top.old); ctx.setIR(top.old); } };
+    updBar();
+  }
+
+  function updBar() {
+    const bar = document.getElementById('iv-pending');
+    if (!bar) return;
+    const { n, bad } = pendingCounts();
+    bar.style.display = hasPending() ? '' : 'none';
+    const t = document.getElementById('iv-pending-n');
+    if (t) t.textContent = `${n} unsaved item edit${n === 1 ? '' : 's'}${bad ? `, ${bad} with a problem (red)` : ''} - `;
+    const ap = document.getElementById('iv-apply');
+    if (ap) ap.disabled = !n || !!bad;
+  }
+
+  function paintAll() {
+    if (S.scanCache && S.scanCache.data) S.dup = dupKeys(S.scanCache.data);
+    document.querySelectorAll('td.iv-c').forEach((td) => {
+      const tr = td.closest('tr');
+      const r = S.recs.get(tr && tr.dataset.key);
+      if (r) paintCell(td, r, td.dataset.f);
+    });
+    updBar();
+  }
+
+  function repaintDetails(ctx, row) {
+    const tr = [...document.querySelectorAll('tr.iv-row')].find((t) => t.dataset.key === row.key);
+    const det = tr && tr.nextElementSibling;
+    if (det && det.classList.contains('iv-det')) { det.firstElementChild.innerHTML = detailsHtml(row); wireDetRows(ctx, det); }
+  }
+
+  function toggleField(ctx, row, f) {
+    if (fieldLocked(row, f)) return;
+    const cur = cellValues(row)[f] === '1';
+    commitEdit(row, f, cur ? '0' : '1');
+    repaintDetails(ctx, row);
+    updBar();
+  }
+
+  function toggleRemove(ctx, key) {
+    const row = S.recs.get(key);
+    if (!row || !row.isContainer) return;
+    const p = S.pending.get(key);
+    if (p && p.remove) {
+      delete p.remove;
+      if (!p.isNew && !Object.keys(p.t).length) S.pending.delete(key);
+    } else if (row.isNew) {
+      S.pending.delete(key); S.open.delete(key);
+    } else {
+      const np = p || { isNew: false, zi: row.zi, gid: row.group.gid, base: null, t: {} };
+      np.t = {}; np.remove = true; S.pending.set(key, np);
+    }
+    S.msg = '';
+    ctx.rerender();
+  }
+
+  function startSizeEdit(ctx, el) {
+    if (el.querySelector('input')) return;
+    const g = scan(ctx.ir).groups.find((x) => x.gid === el.dataset.gid);
+    if (!g || g.kind !== 'container') return;
+    const axis = el.dataset.axis === 'h' ? 'h' : 'w';
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.className = 'iv-ed'; inp.value = String(dimsOf(g)[axis]); inp.spellcheck = false; inp.autocomplete = 'off';
+    inp.style.minWidth = '38px'; inp.style.width = '48px';
+    el.title = ''; el.innerHTML = '<span style="visibility:hidden">' + el.innerHTML + '</span>'; el.appendChild(inp); inp.focus(); inp.select();
+    let done = false;
+    const finish = (commit) => {
+      if (done) return;
+      done = true;
+      if (commit) setSize(g, axis, inp.value);
+      ctx.rerender();
+    };
+    inp.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    };
+    inp.onblur = () => finish(true);
+  }
+
+  function startEdit(ctx, el, row, f) {
+    if (el.querySelector('input')) return;
+    if (!row) {
+      const tr = el.closest('tr');
+      const key = tr && tr.dataset.key;
+      row = key && S.recs.get(key);
+      f = el.dataset.f;
+    }
+    const td = el;
+    if (!row || !f || fieldLocked(row, f)) return;
+    const t = tOf(row), v = cellValues(row);
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.className = 'iv-ed'; inp.value = String(v[f] ?? ''); inp.spellcheck = false; inp.autocomplete = 'off';
+    if (f === 'crafter') inp.style.fontFamily = 'var(--mono, monospace)';
+    td.title = ''; td.innerHTML = '<span style="visibility:hidden">' + td.innerHTML + '</span>'; td.appendChild(inp); inp.focus(); inp.select();
+
+    let done = false, sug = null, sel = -1, matches = [], sugDown = false;
+    const choices = f === 'prefab' ? itemChoices() : [];
+    const onScroll = (ev) => { if (!(sug && sug.contains(ev.target))) closeSug(); };
+    const closeSug = () => { if (sug) { sug.remove(); sug = null; window.removeEventListener('scroll', onScroll, true); } sel = -1; matches = []; };
+    const paintSel = () => { if (sug) [...sug.children].forEach((d, i) => { d.classList.toggle('on', i === sel); if (i === sel) d.scrollIntoView({ block: 'nearest' }); }); };
+    const showSug = () => {
+      const q = inp.value.trim().toLowerCase();
+      if (f !== 'prefab' || !q) { closeSug(); return; }
+      const starts = [], has = [];
+      for (const c of choices) { const a = c[0].toLowerCase(), n = String(c[1]).toLowerCase(); if (a.startsWith(q) || n.startsWith(q)) starts.push(c); else if (a.includes(q) || n.includes(q)) has.push(c); }
+      matches = starts.concat(has).slice(0, 14); sel = -1;
+      if (!matches.length) { closeSug(); return; }
+      if (!sug) {
+        sug = document.createElement('div'); sug.className = 'iv-sug'; document.body.appendChild(sug);
+        sug.onmousedown = (ev) => {
+          ev.preventDefault();
+          const r2 = ev.target.closest('[data-i]');
+          if (r2) { inp.value = matches[+r2.dataset.i][0]; finish(true, 0); }
+          else { sugDown = true; document.addEventListener('mouseup', () => { sugDown = false; }, { once: true }); }
+        };
+        window.addEventListener('scroll', onScroll, true);
+      }
+      const r = inp.getBoundingClientRect();
+      sug.style.left = r.left + 'px'; sug.style.top = r.bottom + 'px'; sug.style.minWidth = Math.max(r.width, 280) + 'px';
+      sug.innerHTML = matches.map((c, i) => `<div data-i="${i}"><b>${escHtml(c[1])}</b><span>${escHtml(c[0])}</span></div>`).join('');
+    };
+    const choose = () => { if (sel >= 0 && matches[sel]) inp.value = matches[sel][0]; };
+    const finish = (commit, step) => {
+      if (done) return;
+      done = true; closeSug();
+      if (commit) commitEdit(row, f, inp.value);
+      paintAll();
+      if (isDetailField(f)) repaintDetails(ctx, row);
+      if (step && !isDetailField(f)) {
+        const cells = [...document.querySelectorAll('td.iv-c')].filter((c) => { const r2 = S.recs.get(c.closest('tr').dataset.key); return r2 && !fieldLocked(r2, c.dataset.f); });
+        const i = cells.indexOf(td) + step;
+        if (cells[i]) startEdit(ctx, cells[i]);
+      }
+    };
+    inp.oninput = showSug;
+    inp.onkeydown = (e) => {
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && f === 'prefab') {
+        e.preventDefault();
+        if (!sug) showSug();
+        if (matches.length) { sel = e.key === 'ArrowDown' ? (sel + 1) % matches.length : (sel <= 0 ? matches.length - 1 : sel - 1); paintSel(); }
+      } else if (e.key === 'Enter') { e.preventDefault(); choose(); finish(true, 0); }
+      else if (e.key === 'Escape') { e.preventDefault(); if (sug) closeSug(); else finish(false, 0); }
+      else if (e.key === 'Tab') { e.preventDefault(); choose(); finish(true, e.shiftKey ? -1 : 1); }
+    };
+    inp.onblur = () => { if (sugDown) { inp.focus(); return; } finish(true, 0); };
+    if (f === 'prefab') showSug();
+  }
+
+  function commitEdit(row, f, value) {
+    const key = row.key;
+    let p = S.pending.get(key);
+    if (!p) { p = { isNew: !!row.isNew, zi: row.zi, gid: row.group.gid, base: row.base || null, t: {} }; S.pending.set(key, p); }
+    const base = baseValues(row);
+    if (String(value) === String(base[f] ?? '')) delete p.t[f]; else p.t[f] = value;
+    if (!p.isNew && !p.remove && !Object.keys(p.t).length) S.pending.delete(key);
+    S.msg = '';
+  }
+
+  // ---- apply pending edits -------------------------------------------------------
+  function blankItem() {
+    return {
+      prefabName: '', prefabHash: 0, stack: 1, durability: 0, gridX: 0, gridY: 0, equipped: false, quality: 1,
+      variant: 0, crafterID: 0n, crafterName: '', customData: [], worldLevel: 0, pickedUp: false, cheated: false,
+    };
+  }
+  function applyFields(it, f) {
+    if (f.prefab !== undefined) { it.prefabName = f.prefab; it.prefabHash = BFItems().hashOfName(f.prefab); }
+    if (f.stack !== undefined) it.stack = f.stack;
+    if (f.quality !== undefined) it.quality = f.quality;
+    if (f.durability !== undefined) it.durability = f.durability;
+    if (f.gridX !== undefined) it.gridX = f.gridX;
+    if (f.gridY !== undefined) it.gridY = f.gridY;
+    if (f.crafterName !== undefined) { it.crafterName = f.crafterName; if (f.crafterName && it.crafterID === 0n) it.crafterID = 1n; }
+    if (f.variant !== undefined) it.variant = f.variant;
+    if (f.crafterID !== undefined) it.crafterID = f.crafterID;
+    if (f.worldLevel !== undefined) it.worldLevel = f.worldLevel;
+    if (f.equipped !== undefined) it.equipped = !!f.equipped;
+    if (f.pickedUp !== undefined) it.pickedUp = !!f.pickedUp;
+    if (f.cheated !== undefined) it.cheated = !!f.cheated;
+    for (const k of Object.keys(f)) if (k.startsWith('cd:')) {
+      const c = (it.customData || []).find((x) => x.key === k.slice(3));
+      if (c) c.value = f[k];
+    }
+  }
+  function durTarget(e, cur, notes) {
+    if (e.fields.quality === undefined && e.fields.prefab === undefined) return null;
+    const prefab = e.fields.prefab !== undefined ? e.fields.prefab : (e.expect ? e.expect.prefab : '');
+    const q = e.fields.quality !== undefined ? e.fields.quality : (e.expect ? e.expect.quality : 1);
+    const d = itemInfo(prefab);
+    if (!d || d.length < 8) { if (notes) notes.push(`${e.label}: durability not updated (no durability data for the item)`); return null; }
+    if (!d[5]) return null;
+    if (typeof cur === 'number' && cur > 65535) return null;
+    return Math.fround(d[6] + Math.max(0, q - 1) * d[7]);
+  }
+
+  function applyEdits(ir, edits) {
+    const h = H();
+    const failed = [], notes = [];
+    let applied = 0;
+    const groups = new Map();
+    for (const e of edits) { const k = `${e.zi}:${e.kind}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+    const zdos = ir.zdos.slice();
+    const cloneZ = (z) => { const o = Object.assign({}, z); for (const b of ['floats', 'vec3s', 'quats', 'ints', 'longs', 'strings', 'bytes']) o[b] = z[b].map((x) => Object.assign({}, x)); return o; };
+    const putInt = (z, hash, v) => { const x = z.ints.find((q) => q.hash === hash); if (x) x.value = v; else z.ints.push({ hash, value: v }); };
+    const putStr = (z, hash, v) => { const x = z.strings.find((q) => q.hash === hash); if (x) x.value = v; else z.strings.push({ hash, value: v }); };
+    const putFloat = (z, hash, v) => { const x = z.floats.find((q) => q.hash === hash); if (x) x.value = v; else z.floats.push({ hash, value: v }); };
+    const putLong = (z, hash, v) => { const x = z.longs.find((q) => q.hash === hash); if (x) x.value = BigInt(v); else z.longs.push({ hash, value: BigInt(v) }); };
+
+    for (const [k, list] of groups) {
+      const zi = list[0].zi;
+      const z0 = ir.zdos[zi];
+      const kind = list[0].kind;
+      if (!z0) { for (const e of list) failed.push(`${e.label}: object not found`); continue; }
+      const z = cloneZ(z0);
+      let touched = false;
+
+      if (kind === 'c') {
+        const be = z.bytes.find((x) => x.hash === h.items), se = z.strings.find((x) => x.hash === h.items);
+        let inv = null, derr = null;
+        try {
+          if (be) inv = BFItems().decodeInventory(be.value, nameOfHash);
+          else if (se) inv = BFItems().decodeInventory(BFItems().b64dec(se.value), nameOfHash);
+          else inv = { version: 110, items: [] };
+        } catch (err) { derr = err; }
+        // a container size is a plain int key on the object; drop a float copy so only one source remains
+        const putSize = (hash, v) => { z.floats = z.floats.filter((q) => q.hash !== hash); putInt(z, hash, v); };
+        let n = 0, sized = 0;
+        if (derr) for (const e of list) if (!e.isSize) failed.push(`${e.label}: ${derr.message}`);
+        for (const e of list) {
+          if (e.isSize) {
+            putSize(h['Container.m_width'], e.w); putSize(h['Container.m_height'], e.h);
+            sized++; touched = true;
+            continue;
+          }
+          if (derr || !inv) continue;
+          if (e.remove) {
+            const it = inv.items[e.i];
+            if (!it || (it.prefabName || '#?') !== e.expect.prefab || it.quality !== e.expect.quality) { failed.push(`${e.label}: the container no longer holds that item`); continue; }
+            inv.items[e.i] = null; n++;
+            continue;
+          }
+          if (e.isNew) {
+            const f = e.item, it = blankItem();
+            applyFields(it, Object.assign({}, f));
+            if (it.crafterName && it.crafterID === 0n) it.crafterID = 1n;
+            if (e.autoDur) { const d = itemInfo(f.prefab); if (d && d.length >= 8 && d[5]) it.durability = Math.fround(d[6] + Math.max(0, (it.quality || 1) - 1) * d[7]); }
+            else it.durability = f.durability ?? 0;
+            inv.items.push(it); n++;
+            continue;
+          }
+          const it = inv.items[e.i];
+          if (!it || (it.prefabName || '#?') !== e.expect.prefab || it.quality !== e.expect.quality) { failed.push(`${e.label}: the container no longer holds that item`); continue; }
+          const nd = durTarget(e, it.durability, notes);
+          applyFields(it, e.fields);
+          if (e.fields.durability === undefined && nd !== null) it.durability = nd;
+          n++;
+        }
+        if (n) {
+          if (inv && inv.items.some((x) => x === null)) inv.items = inv.items.filter((x) => x !== null);
+          const enc = BFItems().encodeInventory110(inv.items);
+          if (be) be.value = enc;
+          else {
+            if (se) z.strings = z.strings.filter((x) => x !== se);
+            z.bytes.push({ hash: h.items, name: 'items', value: enc });
+          }
+          // a container that had no stored inventory must not roll default loot after we put an item in it
+          if (!be && !se && list.some((e) => e.isNew)) putInt(z, h.addedDefaultItems, 1);
+          applied += n; touched = true;
+        }
+        if (sized) applied += sized;
+        if (touched) zdos[zi] = z;
+        continue;
+      }
+
+      if (kind === 'v') {
+        for (const e of list) {
+          const kh = (key) => gsh(key);
+          if (e.fields.prefab !== undefined) putInt(z, kh(e.vkey), BFItems().hashOfName(e.fields.prefab));
+          if (e.fields.quality !== undefined) putInt(z, kh(e.vkey + 'Quality'), e.fields.quality);
+          applied++; touched = true;
+        }
+        if (touched) zdos[zi] = z;
+        continue;
+      }
+
+      // item stand, armor-stand slot or dropped item
+      for (const e of list) {
+        try {
+          if (e.kind === 'd' && e.fields.prefab !== undefined) throw new Error('the item of a dropped item is its prefab and cannot be changed here');
+          const slot = e.kind === 'a' ? e.slot : null;
+          const kh = (key) => (slot === null ? h[key] : slotHash(slot, key));
+          const hasInt = (hash) => z.ints.some((q) => q.hash === hash), hasStr = (hash) => z.strings.some((q) => q.hash === hash);
+          const de = z.bytes.find((x) => x.hash === kh('itemData'));
+          let it = null;
+          if (de && de.value.length > 2) {
+            try { it = BFItems().readCompact(new (BFItems().Rd)(de.value.subarray(1)), de.value[0], nameOfHash); }
+            catch (err) { throw new Error('could not read the item data: ' + err.message); }
+          }
+          if (e.fields.prefab !== undefined) {
+            const ih = kh('item');
+            const ie = z.ints.find((q) => q.hash === ih), is = z.strings.find((q) => q.hash === ih);
+            if (ie) ie.value = BFItems().hashOfName(e.fields.prefab);
+            else if (is) is.value = e.fields.prefab;
+            else if (!it) throw new Error('no item key on the object');
+          }
+          if (it) {
+            const nd = durTarget(e, it.durability, notes);
+            applyFields(it, e.fields);
+            if (e.fields.durability === undefined && nd !== null) {
+              it.durability = nd;
+              const dke = z.floats.find((q) => q.hash === kh('durability')); if (dke) dke.value = nd;
+            }
+            const w = new (BFItems().Wr)(); w.byte(110); BFItems().writeCompact(w, it); de.value = w.bytes();
+            if (e.fields.quality !== undefined && hasInt(kh('quality'))) putInt(z, kh('quality'), e.fields.quality);
+            if (e.fields.stack !== undefined && hasInt(kh('stack'))) putInt(z, kh('stack'), e.fields.stack);
+            if (e.fields.crafterName !== undefined && hasStr(kh('crafterName'))) putStr(z, kh('crafterName'), e.fields.crafterName);
+            if (e.fields.variant !== undefined && hasInt(kh('variant'))) putInt(z, kh('variant'), e.fields.variant);
+            if (e.fields.worldLevel !== undefined && hasInt(kh('worldLevel'))) putInt(z, kh('worldLevel'), e.fields.worldLevel);
+          } else {
+            if (e.fields.stack !== undefined) putInt(z, kh('stack'), e.fields.stack);
+            if (e.fields.quality !== undefined) putInt(z, kh('quality'), e.fields.quality);
+            if (e.fields.crafterName !== undefined) putStr(z, kh('crafterName'), e.fields.crafterName);
+            if (e.fields.variant !== undefined) putInt(z, kh('variant'), e.fields.variant);
+            if (e.fields.worldLevel !== undefined) putInt(z, kh('worldLevel'), e.fields.worldLevel);
+            if (e.fields.equipped !== undefined) putInt(z, kh('equipped'), e.fields.equipped ? 1 : 0);
+            if (e.fields.pickedUp !== undefined) putInt(z, kh('pickedUp'), e.fields.pickedUp ? 1 : 0);
+            if (e.fields.crafterID !== undefined) putLong(z, kh('crafterID'), e.fields.crafterID);
+            const nd = durTarget(e, undefined, notes);
+            const dv = e.fields.durability !== undefined ? e.fields.durability : nd;
+            if (dv != null) putFloat(z, kh('durability'), dv);
+          }
+          applied++; touched = true;
+        } catch (err) { failed.push(`${e.label}: ${err.message}`); }
+      }
+      if (touched) zdos[zi] = z;
+    }
+    return { ir: applied ? Object.assign({}, ir, { zdos }) : ir, applied, failed, notes };
+  }
+
+  function applyPending(ctx, opts) {
+    opts = opts || {};
+    if (!hasPending() || !ctx.ir || !ctx.setIR) return { ok: true };
+    if (!opts.allowCross && root && root.BFCreators && root.BFCreators.hasPending && root.BFCreators.hasPending())
+      return { ok: false, msg: 'Apply or discard the pending Creator Loot edits first.' };
+    if (!opts.allowCross && root && root.BFEnemies && root.BFEnemies.hasPending && root.BFEnemies.hasPending())
+      return { ok: false, msg: 'Apply or discard the pending Enemy edits first.' };
+
+    const scanData = scan(ctx.ir);
+    S.recs = buildRecs(scanData);
+    S.dup = dupKeys(scanData);
+    const edits = [], problems = [];
+    for (const [key, p] of S.pending) {
+      const r = S.recs.get(key);
+      if (!r) { problems.push('an item row disappeared'); continue; }
+      if (p.remove) {
+        if (r.ref.k !== 'c') { problems.push(`${r.group.stem}: that item cannot be removed here`); continue; }
+        edits.push({ zi: r.zi, kind: 'c', remove: true, i: r.ref.i, expect: { prefab: r.prefab, quality: r.quality }, label: `${itemName(r.prefab)} in ${r.group.stem}` });
+        continue;
+      }
+      const ev = evalEdit(r, p.t);
+      if (Object.keys(ev.bad).length) { problems.push(`${r.group.stem}: ${Object.values(ev.bad)[0]}`); continue; }
+      const dup = r.isContainer && S.dup.has(slotKey(r));
+      if (dup && (p.isNew || p.t.gridX !== undefined || p.t.gridY !== undefined)) { problems.push(`${r.group.stem}: slot ${slotKey(r).split(':')[1]} is used twice`); continue; }
+      if (p.isNew) {
+        const item = Object.assign({}, p.base);
+        for (const k of Object.keys(ev.fields)) item[k] = ev.fields[k];
+        if (!item.prefab) { problems.push('a new item has no item chosen'); continue; }
+        edits.push({ zi: p.zi, kind: 'c', isNew: true, item, autoDur: p.t.durability === undefined, label: `${itemName(item.prefab)} in ${r.group.stem}` });
+      } else if (Object.keys(ev.fields).length) {
+        edits.push({
+          zi: r.zi, kind: r.ref.k, i: r.ref.i, slot: r.ref.slot, vkey: r.ref.key,
+          expect: { prefab: r.prefab, quality: r.quality }, fields: ev.fields,
+          label: `${itemName(r.prefab)} on ${r.group.stem}`,
+        });
+      }
+    }
+    for (const [gid, p] of S.size) {
+      if (p.w === undefined && p.h === undefined) continue;
+      const g = scanData.groups.find((x) => x.gid === gid);
+      if (!g) { problems.push('a container disappeared'); continue; }
+      const ev = evalSize(g);
+      if (Object.keys(ev.bad).length) { problems.push(`${g.stem}: ${Object.values(ev.bad)[0]}`); continue; }
+      edits.push({ zi: g.zi, kind: 'c', isSize: true, w: ev.w, h: ev.h, label: `grid size of ${g.stem}` });
+    }
+    if (problems.length) return { ok: false, msg: 'Fix the Items edits marked in red first: ' + problems.slice(0, 4).join('; ') + (problems.length > 4 ? ` (and ${problems.length - 4} more)` : '') + '.' };
+    if (!edits.length) { S.pending.clear(); S.size.clear(); return { ok: true }; }
+
+    const res = applyEdits(ctx.ir, edits);
+    if (!res.applied) { S.msg = 'No item edit could be applied: ' + res.failed.join('; '); S.msgIr = idOf(ctx.ir); return { ok: false, msg: S.msg }; }
+    const msg = `Item/container edits: ${res.applied} change(s)`;
+    const ir2 = Object.assign({}, res.ir, { reports: Object.assign({}, res.ir.reports, { warnings: res.ir.reports.warnings.concat([msg]) }) });
+    S.undo.push({ old: ctx.ir, now: ir2 });
+    S.pending.clear(); S.size.clear();
+    S.msg = `Applied ${res.applied} item/container edit(s) to the loaded file; they are in the converted file.` +
+      (res.failed.length ? ` Not applied: ${res.failed.join('; ')}` : '') +
+      (res.notes.length ? ` ${res.notes.length} durability note(s): ${res.notes[0]}${res.notes.length > 1 ? '…' : ''}` : '');
+    S.msgIr = idOf(ir2);
+    if (opts.noSet) return { ok: true, ir: ir2 };
+    ctx.setIR(ir2);
+    return { ok: true };
+  }
+
+  const api = { init, html, wire, applyPending, hasPending, state: S,
+    _test: { scanAll, scan, evalEdit, evalSize, applyEdits, dupKeys, addDraft, resolveItem, itemChoices, itemName, maxStack, maxQuality, maxDur, containerDims, H, dimsOf, setSize, isRemoved } };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  if (root) root.BFInventory = api;
+})(typeof window !== 'undefined' ? window : null);
+
+</script>
 
 <script>
 'use strict';
-/* global BFC, BFCat, BFChunks, BFItems, BFCreators, BFEnemies, BFBatch */
+/* global BFC, BFCat, BFChunks, BFItems, BFCreators, BFEnemies, BFBatch, BFInventory */
 // ============================================================================
 // Valheim Build File Converter v3 — app layer (UI + wiring).
 //   codecs (window.BFC)  : v2 format codecs, unchanged
@@ -4580,14 +6065,14 @@ function renderInspector() {
   const ir = state.ir, S = state.stats, el = $('inspector');
   const m = ir.meta;
   const flavor = m.blueprintFlavor ? `<span class="badge flavor">${esc(m.blueprintFlavor)}</span>` : '';
-  const tabs = [['overview', 'Overview'], ['creators', 'Creator Loot'], ['enemies', 'Enemies'], ['batch', 'Batch edit'], ['fields', 'Fields'], ['unknown', `Unknown (${S.unknown.length})`]];
+  const tabs = [['overview', 'Overview'], ['creators', 'Creator Loot'], ['enemies', 'Enemies'], ['items', 'Items'], ['batch', 'Batch edit'], ['fields', 'Fields'], ['unknown', `Unknown (${S.unknown.length})`]];
   let body = '';
-  if (state.tab === 'overview') body = overviewHtml(); else if (state.tab === 'fields') body = fieldsHtml(); else if (state.tab === 'creators') body = BFCreators.html(creatorsCtx()); else if (state.tab === 'enemies') body = BFEnemies.html(creatorsCtx()); else if (state.tab === 'batch') body = BFBatch.html(creatorsCtx()); else body = unknownHtml();
+  if (state.tab === 'overview') body = overviewHtml(); else if (state.tab === 'fields') body = fieldsHtml(); else if (state.tab === 'creators') body = BFCreators.html(creatorsCtx()); else if (state.tab === 'enemies') body = BFEnemies.html(creatorsCtx()); else if (state.tab === 'items') body = BFInventory.html(creatorsCtx()); else if (state.tab === 'batch') body = BFBatch.html(creatorsCtx()); else body = unknownHtml();
   el.innerHTML = `
     <h2><span class="badge">${esc(state.sourceFmt)}</span>${flavor}${esc(m.name ?? state.baseName)}</h2>
     <div class="tabs">${tabs.map(([k, l]) => `<button class="tab ${k === state.tab ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>${body}`;
   el.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { state.tab = b.dataset.tab; renderInspector(); }));
-  if (state.tab === 'fields') wireFields(); else if (state.tab === 'unknown') wireUnknown(); else if (state.tab === 'creators') BFCreators.wire(creatorsCtx()); else if (state.tab === 'enemies') BFEnemies.wire(creatorsCtx()); else if (state.tab === 'batch') BFBatch.wire(creatorsCtx());
+  if (state.tab === 'fields') wireFields(); else if (state.tab === 'unknown') wireUnknown(); else if (state.tab === 'creators') BFCreators.wire(creatorsCtx()); else if (state.tab === 'enemies') BFEnemies.wire(creatorsCtx()); else if (state.tab === 'items') BFInventory.wire(creatorsCtx()); else if (state.tab === 'batch') BFBatch.wire(creatorsCtx());
 }
 function overviewHtml() {
   const ir = state.ir, S = state.stats, m = ir.meta, zs = ir.zdos;
@@ -4752,7 +6237,19 @@ function renderReport(ir) {
 }
 function convert() {
   if (!state.ir) return;
-  { const pe = BFCreators.applyPending(creatorsCtx()); if (!pe.ok) { setStatus('err', esc(pe.msg)); return; } }   // v5: bake pending Unique edits into the loaded file first
+  { // v6: bake the edit tabs into one new IR before the export
+    let cur = state.ir;
+    const cpe = BFCreators.applyPending(Object.assign(creatorsCtx(), { ir: cur }), { allowCross: true, noSet: true });
+    if (!cpe.ok) { setStatus('err', esc(cpe.msg)); return; }
+    if (cpe.ir) cur = cpe.ir;
+    const epe = BFEnemies.applyPending(Object.assign(creatorsCtx(), { ir: cur }), { allowCross: true, noSet: true });
+    if (!epe.ok) { setStatus('err', esc(epe.msg)); return; }
+    if (epe.ir) cur = epe.ir;
+    const ipe = BFInventory.applyPending(Object.assign(creatorsCtx(), { ir: cur }), { allowCross: true, noSet: true });
+    if (!ipe.ok) { setStatus('err', esc(ipe.msg)); return; }
+    if (ipe.ir) cur = ipe.ir;
+    if (cur !== state.ir) { state.ir = cur; refresh(); }
+  }
   const status = $('conv-status'), t = state.target;
   const opt = (id) => $(id);
   const { ir, counts } = applyDrops(state.ir, state.drops);
@@ -4809,6 +6306,7 @@ function boot() {
   BFCreators.init({ data: JSON.parse($('loot-data').textContent), getCat: () => cat, BFC, BFItems, resolve, download, esc });
   BFEnemies.init({ data: JSON.parse($('loot-data').textContent), getCat: () => cat, esc, download, getFiles: (c) => BFCreators.files(c) });
   BFBatch.init({ data: JSON.parse($('loot-data').textContent), getCat: () => cat, esc, download });
+  BFInventory.init({ data: JSON.parse($('loot-data').textContent), getCat: () => cat, BFC, BFItems, esc, download });
   const drop = $('drop'), input = $('file-input'), folder = $('folder-input');
   drop.addEventListener('click', (e) => { if (e.target.id !== 'pick-folder') input.click(); });
   $('pick-folder').addEventListener('click', (e) => { e.stopPropagation(); folder.click(); });
