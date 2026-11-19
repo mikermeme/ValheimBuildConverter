@@ -2882,6 +2882,8 @@ BFC.b64encode = b64encode;
     if (!U.pending.size || !ctx.ir || !ctx.setIR) return { ok: true };
     if (!opts.allowCross && root && root.BFEnemies && root.BFEnemies.hasPending && root.BFEnemies.hasPending())
       return { ok: false, msg: 'Apply or discard the pending Enemy edits first.' };
+    if (!opts.allowCross && root && root.BFOrigin && root.BFOrigin.hasPending && root.BFOrigin.hasPending())
+      return { ok: false, msg: 'Apply or discard the pending build origin move first.' };
     if (!opts.allowCross && root && root.BFInventory && root.BFInventory.hasPending && root.BFInventory.hasPending())
       return { ok: false, msg: 'Apply or discard the pending Items edits first.' };
     const edits = [];
@@ -3303,6 +3305,8 @@ BFC.b64encode = b64encode;
     if (!opts.allowCross) {
       if (root && root.BFCreators && root.BFCreators.hasPending && root.BFCreators.hasPending())
         return { ok: false, msg: 'Apply or discard the pending Creator Loot edits first.' };
+      if (root && root.BFOrigin && root.BFOrigin.hasPending && root.BFOrigin.hasPending())
+        return { ok: false, msg: 'Apply or discard the pending build origin move first.' };
       if (root && root.BFInventory && root.BFInventory.hasPending && root.BFInventory.hasPending())
         return { ok: false, msg: 'Apply or discard the pending Items edits first.' };
     }
@@ -4037,13 +4041,14 @@ BFC.b64encode = b64encode;
       return { st: 'changed', flags, line: `${a.key}: ${before} -> ${fmt(plain(r.v))}${flags ? ' (+HasFields flags)' : ''}` , changedValue: changed };
     }
 
-    function run(ir, rules) {
+    function run(ir, rules, opts) {
       const t0 = Date.now();
+      const full = !!(opts && opts.full);       // keep every change (the download report), not just the 8 samples
       const zdos = ir.zdos.slice();
       const owned = new Set(), changedObjs = new Set();
       const reports = [];
       for (const rule of rules) {
-        const rr = { name: rule.name || 'rule', enabled: rule.enabled !== false, errors: [], matched: 0, selected: 0, changed: 0, same: 0, skipped: new Map(), samples: [], unknownPrefab: 0, flagsAdded: 0 };
+        const rr = { name: rule.name || 'rule', enabled: rule.enabled !== false, errors: [], matched: 0, selected: 0, changed: 0, same: 0, skipped: new Map(), samples: [], changes: full ? [] : null, unknownPrefab: 0, flagsAdded: 0 };
         reports.push(rr);
         if (!rr.enabled) continue;
         const cr = compileRule(rule);
@@ -4082,7 +4087,9 @@ BFC.b64encode = b64encode;
           });
           if (anyChanged) {
             rr.changed++; changedObjs.add(i);
-            if (rr.samples.length < 8) rr.samples.push({ prefab: stem || hexName(z.prefabHash), x: z.pos.x, z: z.pos.z, lines });
+            const rec = { prefab: stem || hexName(z.prefabHash), x: z.pos.x, y: z.pos.y, z: z.pos.z, lines };
+            if (rr.samples.length < 8) rr.samples.push(rec);
+            if (full) rr.changes.push(rec);
           } else if (!anySkipped) rr.same++;
         }
       }
@@ -4245,7 +4252,7 @@ BFC.b64encode = b64encode;
 <ol>
 <li>Load your file, then add a rule.</li>
 <li>Read the line under the rule: <i>matched</i> (right prefab and component), <i>selected</i> (passed your Only-when test), <i>would change</i>, <i>already set</i> (nothing to do). Open <i>sample changes</i> to see real before -&gt; after values, and <i>why skipped</i> if anything was skipped.</li>
-<li>Nothing changes in your file until you press <b>Apply</b>. <b>Undo last apply</b> takes it back. <b>Download rules + change report</b> keeps a record. Rules run from top to bottom and each one sees the result of the rules above it, so order matters.</li>
+<li>Nothing changes in your file until you press <b>Apply</b>. <b>Undo last apply</b> takes it back. <b>Download rules + change report</b> keeps a record: the JSON lists every changed object (the on-screen list only shows the first 8 per rule). Rules run from top to bottom and each one sees the result of the rules above it, so order matters.</li>
 </ol>
 <h4>Recipes</h4>
 <ul>
@@ -4363,21 +4370,37 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
     wireDraw(ctx, rootEl);
   }
 
-  function logText(ctx, res) {
+  // The report is built from the run that was applied (so it still lists everything after Apply), or from
+  // the current preview when nothing was applied.  `full: true` keeps every change, not just the samples.
+  function logText(ctx) {
+    const ap = S.applied && S.applied.now === ctx.ir ? S.applied : null;
+    const rules = ap ? ap.rules : S.rules;
+    const base = ap ? ap.old : ctx.ir;
+    const res = base ? engine().run(base, rules, { full: true }) : null;
     return JSON.stringify({
-      tool: 'Build File Converter v5 - batch edit', file: ctx.name || '', when: new Date().toISOString(), objects: ctx.ir ? ctx.ir.zdos.length : 0,
-      changedObjects: res ? res.changedObjects : 0, rules: S.rules,
-      report: res ? res.rules.map((r) => ({ name: r.name, enabled: r.enabled, errors: r.errors, matched: r.matched, selected: r.selected, changed: r.changed, alreadySet: r.same, skipped: Object.fromEntries(r.skipped), samples: r.samples })) : [],
+      tool: 'Build File Converter v6 - batch edit', file: ctx.name || '', when: new Date().toISOString(),
+      mode: ap ? 'applied' : 'preview', appliedAt: ap ? ap.when : null,
+      objects: base ? base.zdos.length : 0,
+      changedObjects: res ? res.changedObjects : 0, rules,
+      report: res ? res.rules.map((r) => ({ name: r.name, enabled: r.enabled, errors: r.errors, matched: r.matched, selected: r.selected, changed: r.changed, alreadySet: r.same, skipped: Object.fromEntries(r.skipped), samples: r.samples, changes: r.changes })) : [],
     }, (k, v) => (typeof v === 'bigint' ? v.toString() : v), 1);
   }
 
   function apply(ctx) {
     const res = compute(ctx);
     if (!res || !res.changedObjects || !ctx.setIR) return;
+    if (root) {
+      const busy = [
+        [root.BFOrigin, 'build origin'], [root.BFCreators, 'Creator Loot'], [root.BFEnemies, 'Enemies'], [root.BFInventory, 'Items'],
+      ].find(([mod]) => mod && mod.hasPending && mod.hasPending());
+      if (busy) { S.msg = `Apply or discard the pending ${busy[1]} edits first.`; draw(ctx); return; }
+    }
     const old = ctx.ir;
+    const rules = JSON.parse(JSON.stringify(S.rules));
     const lines = res.rules.filter((r) => r.changed).map((r) => `Batch edit "${r.name}": ${r.changed} object(s) changed`);
     const ir2 = Object.assign({}, old, { zdos: res.zdos, reports: Object.assign({}, old.reports, { warnings: old.reports.warnings.concat(lines) }) });
     S.undo.push({ old, now: ir2 });
+    S.applied = { old, now: ir2, rules, when: new Date().toISOString() };
     S.msg = `Applied: ${res.changedObjects.toLocaleString()} object(s) changed. Use Convert & Download to export, and "Download rules + change report" to keep a record.`;
     S.cache = null;
     ctx.setIR(ir2);
@@ -4429,7 +4452,7 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
       else if (act === 'jsonapply') { try { S.rules = rulesFromJson(document.getElementById('bt-json').value); S.json = null; S.msg = `Loaded ${S.rules.length} rule(s).`; } catch (e) { S.msg = 'Invalid JSON: ' + e.message; } }
       else if (act === 'save') { S.deps.download('batch-rules.json', rulesToJson(S.rules), 'application/json'); return; }
       else if (act === 'load') { document.getElementById('bt-file').click(); return; }
-      else if (act === 'log') { S.deps.download(`${(ctx.name || 'file').replace(/[^\w\- ()\[\]]+/g, '_')}.batch-edit-log.json`, logText(ctx, compute(ctx)), 'application/json'); return; }
+      else if (act === 'log') { S.deps.download(`${(ctx.name || 'file').replace(/[^\w\- ()\[\]]+/g, '_')}.batch-edit-log.json`, logText(ctx), 'application/json'); return; }
       else if (act === 'apply') { apply(ctx); return; }
       else if (act === 'undo') { const top = S.undo[S.undo.length - 1]; if (top && ctx.ir === top.now) { S.undo.pop(); S.msg = 'Undone.'; S.cache = null; ctx.setIR(top.old); } return; }
       rerender();
@@ -4438,7 +4461,7 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
 
   function wire(ctx) { draw(ctx); }
 
-  const api = { init, html, wire, createEngine, compileExpr, PRESETS, state: S, rulesFromJson, rulesToJson };
+  const api = { init, html, wire, createEngine, compileExpr, PRESETS, state: S, rulesFromJson, rulesToJson, _test: { logText, apply } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.BFBatch = api;
 })(typeof window !== 'undefined' ? window : null);
@@ -4545,7 +4568,7 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
     const c = cat();
     if (hcache && hcache.cat === c) return hcache.h;
     const h = {};
-    for (const k of ['items', 'itemData', 'item', 'stack', 'quality', 'crafterName', 'crafterID', 'addedDefaultItems', 'durability', 'variant', 'worldLevel', 'equipped', 'pickedUp', 'level', 'enabled', 'piece']) h[k] = c.gsh(k);
+    for (const k of ['items', 'itemData', 'item', 'stack', 'quality', 'crafterName', 'crafterID', 'addedDefaultItems', 'durability', 'variant', 'worldLevel', 'equipped', 'pickedUp', 'cheated', 'level', 'enabled', 'piece']) h[k] = c.gsh(k);
     h['Container.m_width'] = c.gsh('Container.m_width');
     h['Container.m_height'] = c.gsh('Container.m_height');
     for (const k of VISUAL_ITEM_KEYS) { h[k] = c.gsh(k); h[k + 'Quality'] = c.gsh(k + 'Quality'); }
@@ -5208,6 +5231,72 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
 
   function hasPending() { return S.pending.size > 0 || S.size.size > 0; }
 
+  // ---- one-click clean-ups: cheated flags and engravings itemdata -----------------
+  const ENGRAVINGS = /^engravings\./i;
+  function cleanEdits(scanData, what) {
+    const edits = [];
+    for (const g of scanData.groups) {
+      if (g.readOnly) continue;
+      for (const r of g.items) {
+        if (!r || r.readOnly || !r.ref || r.ref.k === 'v') continue;
+        const fields = {};
+        if (what.cheated && r.cheated) fields.cheated = false;
+        if (what.engravings) for (const c of (r.customData || [])) if (ENGRAVINGS.test(c.key)) fields['cdDel:' + c.key] = true;
+        if (!Object.keys(fields).length) continue;
+        const e = { zi: r.zi, kind: r.ref.k, expect: { prefab: r.prefab, quality: r.quality }, fields,
+          label: `${r.prefab || 'item'} at ${Math.round(g.pos.x)}, ${Math.round(g.pos.z)}` };
+        if (r.ref.k === 'c') e.i = r.ref.i;
+        if (r.ref.k === 'a') e.slot = r.ref.slot;
+        edits.push(e);
+      }
+    }
+    return edits;
+  }
+  // Also drop a plain `cheated` key on item stands / armor stands / drops that have no item record.
+  function cleanItems(ir, what) {
+    const scanData = scanAll(ir);
+    const res = applyEdits(ir, cleanEdits(scanData, what));
+    let out = res.ir, plain = 0;
+    if (what.cheated) {
+      const hc = H().cheated;
+      const zdos = out.zdos.slice();
+      for (const g of scanData.groups) {
+        if (g.readOnly || g.kind === 'container' || g.kind === 'inert') continue;
+        const z0 = zdos[g.zi];
+        if (!z0 || !z0.ints.some((q) => q.hash === hc)) continue;
+        zdos[g.zi] = Object.assign({}, z0, { ints: z0.ints.filter((q) => q.hash !== hc) });
+        plain++;
+      }
+      if (plain) out = Object.assign({}, out, { zdos });
+    }
+    return { ir: out, applied: res.applied + plain, failed: res.failed, notes: res.notes };
+  }
+  function busyWith() {
+    if (root && root.BFOrigin && root.BFOrigin.hasPending && root.BFOrigin.hasPending()) return 'build origin';
+    if (root && root.BFCreators && root.BFCreators.hasPending && root.BFCreators.hasPending()) return 'Creator Loot';
+    if (root && root.BFEnemies && root.BFEnemies.hasPending && root.BFEnemies.hasPending()) return 'Enemy';
+    return null;
+  }
+  function applyBulk(ctx, what) {
+    if (!ctx.ir || !ctx.setIR) return;
+    if (hasPending()) { S.msg = 'Apply or discard your pending Item edits first.'; S.msgIr = idOf(ctx.ir); ctx.rerender(); return; }
+    const busy = busyWith();
+    if (busy) { S.msg = `Apply or discard the pending ${busy} edits first.`; S.msgIr = idOf(ctx.ir); ctx.rerender(); return; }
+    const r = cleanItems(ctx.ir, what);
+    if (!r.applied) {
+      S.msg = what.cheated ? 'No cheated tags were found on items.' : 'No engravings itemdata was found.';
+      S.msgIr = idOf(ctx.ir);
+      ctx.rerender();
+      return;
+    }
+    const line = what.cheated ? `Removed the cheated tag from ${r.applied} item(s)` : `Removed engravings itemdata from ${r.applied} item(s)`;
+    const ir2 = Object.assign({}, r.ir, { reports: Object.assign({}, r.ir.reports, { warnings: r.ir.reports.warnings.concat([line]) }) });
+    S.undo.push({ old: ctx.ir, now: ir2 });
+    S.msg = `Applied: ${line.toLowerCase()}. Use Undo last apply to take it back.`;
+    S.msgIr = idOf(ir2);
+    ctx.setIR(ir2);
+  }
+
   function html(ctx) {
     if (!ctx.ir) return `<p class="dim">Load a Rewind or blueprint to see and edit every item in it.</p>`;
     const irId = idOf(ctx.ir);
@@ -5255,6 +5344,8 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
     <div class="kv"><b>Every item in the file</b>: ${num(nContainerItems)} in ${num(nContainers)} container(s) · ${num(nStandItems)} on item/armor stands · ${num(nDrops)} dropped · ${num(nInert)} in inert inventories.
       <span class="dim">Rows on warded or locked stands are listed here too; they are just not counted as loot.</span></div>
     <div class="tools"><span class="dim">Click a slot, item, stack, quality, durability or crafter tag to edit it; open ▸ for variant, crafter id, world level, the flags and itemdata. Click the grid size in a container header to change it, ✕ to remove a row. Edits auto-apply when you convert & download.</span>
+      <button class="btn btn-sm" id="iv-clean-cheated" title="Set the cheated flag to no on every item, and remove a plain cheated key from item stands and drops">Remove all cheated tags</button>
+      <button class="btn btn-sm" id="iv-clean-engrave" title="Delete every itemdata key that starts with engravings. (engravings.craftername, engravings.quality, ...)">Remove all engravings</button>
       <button class="btn btn-sm" id="iv-undo" ${topUndo && ctx.ir === topUndo.now ? '' : 'disabled'}>Undo last apply</button></div>
     <div class="scroll"><table class="hist iv"><thead><tr><td class="n">x</td><td class="n">y</td><td>item</td><td class="n">stack</td><td class="n">quality</td><td class="n">durability</td><td>crafter tag</td><td></td><td></td></tr></thead><tbody>
       ${groups.length ? groups.map(groupHtml).join('') : '<tr><td colspan="9" class="dim">No item data in this file.</td></tr>'}
@@ -5287,6 +5378,8 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
     document.querySelectorAll('.iv-del').forEach((b) => { b.onclick = () => toggleRemove(ctx, b.dataset.key); });
     wireDetRows(ctx, document);
     const ap = $('iv-apply'); if (ap) ap.onclick = () => { const r = applyPending(ctx); if (!r.ok) { S.msg = r.msg; S.msgIr = idOf(ctx.ir); ctx.rerender(); } };
+    const cc = $('iv-clean-cheated'); if (cc) cc.onclick = () => applyBulk(ctx, { cheated: true });
+    const ce = $('iv-clean-engrave'); if (ce) ce.onclick = () => applyBulk(ctx, { engravings: true });
     const dc = $('iv-discard'); if (dc) dc.onclick = () => { S.pending.clear(); S.size.clear(); S.open.clear(); S.msg = ''; S.msgIr = null; ctx.rerender(); };
     const un = $('iv-undo');
     if (un) un.onclick = () => { const top = S.undo[S.undo.length - 1]; if (top && ctx.ir === top.now) { S.undo.pop(); S.msg = 'Item edits undone.'; S.msgIr = idOf(top.old); ctx.setIR(top.old); } };
@@ -5472,6 +5565,10 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
       const c = (it.customData || []).find((x) => x.key === k.slice(3));
       if (c) c.value = f[k];
     }
+    for (const k of Object.keys(f)) if (k.startsWith('cdDel:')) {
+      const del = k.slice(6);
+      it.customData = (it.customData || []).filter((x) => x.key !== del);
+    }
   }
   function durTarget(e, cur, notes) {
     if (e.fields.quality === undefined && e.fields.prefab === undefined) return null;
@@ -5635,6 +5732,8 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
       return { ok: false, msg: 'Apply or discard the pending Creator Loot edits first.' };
     if (!opts.allowCross && root && root.BFEnemies && root.BFEnemies.hasPending && root.BFEnemies.hasPending())
       return { ok: false, msg: 'Apply or discard the pending Enemy edits first.' };
+    if (!opts.allowCross && root && root.BFOrigin && root.BFOrigin.hasPending && root.BFOrigin.hasPending())
+      return { ok: false, msg: 'Apply or discard the pending build origin move first.' };
 
     const scanData = scan(ctx.ir);
     S.recs = buildRecs(scanData);
@@ -5692,16 +5791,250 @@ A value that comes out empty (null, for example iif(test, null, ...) or tagName(
   }
 
   const api = { init, html, wire, applyPending, hasPending, state: S,
-    _test: { scanAll, scan, evalEdit, evalSize, applyEdits, dupKeys, addDraft, resolveItem, itemChoices, itemName, maxStack, maxQuality, maxDur, containerDims, H, dimsOf, setSize, isRemoved } };
+    _test: { scanAll, scan, evalEdit, evalSize, applyEdits, dupKeys, addDraft, resolveItem, itemChoices, itemName, maxStack, maxQuality, maxDur, containerDims, H, dimsOf, setSize, isRemoved, cleanEdits, cleanItems } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.BFInventory = api;
+})(typeof window !== 'undefined' ? window : null);
+
+</script>
+<script>
+/*
+ * bfc-origin.js - the editable build origin shown on the Overview tab of Build File Converter v6.
+ *
+ *   BFOrigin.init({ esc })                     once, at boot
+ *   BFOrigin.html(ctx)                         from overviewHtml()
+ *   BFOrigin.wire(ctx)                         from renderInspector()
+ *   BFOrigin.applyPending(ctx, { allowCross, noSet })   bake the origin move into the loaded file
+ *   BFOrigin.hasPending()                      true while a coordinate edit is unsaved
+ *
+ * A Rewind stores the build origin plus absolute ZDO positions, so moving the origin must move the
+ * whole build: Apply writes the new origin and translates every ZDO by the same offset (and updates
+ * the cached zone sector).  Edits stay pending, like the Creator Loot / Enemies / Items tabs.
+ */
+(function (root) {
+  'use strict';
+
+  const S = { deps: null, pending: null, pendingIr: null, ir: null, undo: [], msg: '', msgIr: null };
+  const AXES = ['x', 'y', 'z'];
+  const ids = new WeakMap();
+  let nextId = 0;
+  const idOf = (o) => { if (!ids.has(o)) ids.set(o, ++nextId); return ids.get(o); };
+
+  function init(deps) { S.deps = deps; }
+  const esc = (s) => S.deps.esc(s);
+  const fmt = (v) => (Number.isFinite(v) ? String(Math.round(v * 1000) / 1000) : '?');
+  const baseOrigin = (ir) => (ir && ir.meta && ir.meta.origin) || { x: 0, y: 0, z: 0 };
+  const hasPending = () => !!(S.pending && AXES.some((a) => S.pending[a] !== undefined));
+
+  function canEdit(ir) {
+    if (!ir || !ir.meta) return false;
+    const o = baseOrigin(ir);
+    return ir.meta.sourceFormat === 'rewind' || ir.meta.sourceFormat === 'chunk' || !!(o.x || o.y || o.z);
+  }
+
+  // pending edits belong to one loaded file; a new IR starts clean
+  function sync(ir) {
+    const id = idOf(ir);
+    if (S.pendingIr !== id) { S.pending = null; S.pendingIr = id; }
+    S.ir = ir;
+  }
+
+  // what the typed coordinate texts mean: fields = values that really change, bad = problems (per axis)
+  function evalEdit(ir, t) {
+    const out = { fields: {}, bad: {} };
+    if (!ir || !ir.meta) return out;
+    const base = baseOrigin(ir);
+    for (const a of AXES) {
+      if (t[a] === undefined) continue;
+      const raw = String(t[a]).trim().replace(/,/g, '.');
+      if (!/^-?\d+(\.\d+)?$/.test(raw)) out.bad[a] = `${a} must be a number`;
+      else {
+        const v = Math.fround(Number(raw));
+        if (!Number.isFinite(v) || Math.abs(v) > 1e6) out.bad[a] = `${a} must be between -1,000,000 and 1,000,000`;
+        else if (v !== Math.fround(base[a])) out.fields[a] = v;
+      }
+    }
+    return out;
+  }
+  function preview(ir, t) {
+    const base = baseOrigin(ir), ev = evalEdit(ir, t);
+    const v = (a) => (ev.fields[a] !== undefined ? ev.fields[a] : base[a]);
+    return { ev, x: v('x'), y: v('y'), z: v('z') };
+  }
+  function pendingCounts() {
+    if (!S.pending) return { n: 0, bad: 0 };
+    const ev = evalEdit(S.ir, S.pending);
+    let n = 0, bad = 0;
+    for (const a of AXES) if (S.pending[a] !== undefined) { n++; if (ev.bad[a]) bad++; }
+    return { n, bad };
+  }
+
+  function cellView(ir, a, pv, t) {
+    const bad = pv.ev.bad[a];
+    const html = bad ? esc(String(t[a])) : esc(fmt(pv[a]));
+    const cls = bad ? ' bad' : t[a] !== undefined ? ' mod' : '';
+    const title = bad || `Click to edit the origin ${a}; every instance moves by the same offset when you apply`;
+    return { cls, html, title };
+  }
+
+  function html(ctx) {
+    const ir = ctx.ir;
+    if (!ir) return '';
+    sync(ir);
+    const m = ir.meta || {};
+    if (m.ihCoordinates) {
+      const c = m.ihCoordinates;
+      return `<div class="kv">Saved at <b>${esc(c.x.toFixed(1))}, ${esc(c.y.toFixed(1))}, ${esc(c.z.toFixed(1))}</b></div>`;
+    }
+    if (!canEdit(ir)) return '';
+    const p = S.pending || {}, pv = preview(ir, p);
+    const topUndo = S.undo[S.undo.length - 1];
+    const msg = S.msgIr === idOf(ir) ? S.msg : '';
+    const cells = AXES.map((a) => {
+      const v = cellView(ir, a, pv, p);
+      return `<span class="or-c${v.cls}" data-f="${a}" title="${esc(v.title)}">${v.html}</span>`;
+    }).join(', ');
+    return `<style>
+      .or-c{display:inline-block;position:relative;cursor:text;border-bottom:1px dashed var(--border);padding:0 3px}
+      .or-c:hover{background:var(--surface2)}.or-c.mod{border-bottom-color:var(--accent);color:var(--accent)}
+      .or-c.bad{border-bottom-color:var(--err);color:var(--err)}
+      .or-c input.or-ed{position:absolute;left:0;top:0;width:100%;height:100%;min-width:70px;box-sizing:border-box;margin:0;padding:0 4px;border:0;border-radius:3px;outline:1px solid var(--warn);background:var(--surface);color:var(--text);font:inherit;line-height:inherit}
+    </style>
+    <div class="kv"><b>Build origin</b> ${cells} <span class="dim">— click a coordinate to edit; Apply moves every instance by the same offset</span>
+      <button class="btn btn-sm" id="or-undo" ${topUndo && ctx.ir === topUndo.now ? '' : 'disabled'}>Undo last move</button></div>
+    <div id="or-pending" class="status info" style="display:none"><span id="or-pending-n"></span><button class="btn btn-sm" id="or-apply">Apply to loaded file</button> <button class="btn btn-sm" id="or-discard">Discard</button></div>
+    ${msg ? `<div class="status info">${esc(msg)}</div>` : ''}`;
+  }
+
+  // what a typed text means when the cell is committed
+  const origText = (ir, a) => fmt(baseOrigin(ir)[a]);
+  function commitEdit(ir, a, value) {
+    if (!S.pending) S.pending = {};
+    if (String(value).trim() === origText(ir, a)) delete S.pending[a]; else S.pending[a] = value;
+    if (!AXES.some((x) => S.pending[x] !== undefined)) S.pending = null;
+    S.msg = '';
+  }
+
+  // Move the origin and every ZDO by the same offset.  Only the touched objects are cloned.
+  function applyOrigin(ir, fields) {
+    const base = baseOrigin(ir);
+    const origin = Object.assign({}, base);
+    for (const a of AXES) if (fields[a] !== undefined) origin[a] = fields[a];
+    const d = { x: origin.x - base.x, y: origin.y - base.y, z: origin.z - base.z };
+    const moved = d.x !== 0 || d.y !== 0 || d.z !== 0;
+    const zdos = moved ? ir.zdos.map((z) => {
+      const pos = { x: z.pos.x + d.x, y: z.pos.y + d.y, z: z.pos.z + d.z };
+      return Object.assign({}, z, {
+        pos, sectorX: Math.floor((pos.x + 32) / 64), sectorY: Math.floor((pos.z + 32) / 64),
+      });
+    }) : ir.zdos;
+    const meta = Object.assign({}, ir.meta, { origin });
+    return { ir: Object.assign({}, ir, { meta, zdos }), applied: moved ? ir.zdos.length : 0, delta: d, origin };
+  }
+
+  function applyPending(ctx, opts) {
+    opts = opts || {};
+    if (!hasPending() || !ctx.ir || !ctx.setIR) return { ok: true };
+    if (!opts.allowCross) {
+      if (root && root.BFCreators && root.BFCreators.hasPending && root.BFCreators.hasPending())
+        return { ok: false, msg: 'Apply or discard the pending Creator Loot edits first.' };
+      if (root && root.BFEnemies && root.BFEnemies.hasPending && root.BFEnemies.hasPending())
+        return { ok: false, msg: 'Apply or discard the pending Enemy edits first.' };
+      if (root && root.BFInventory && root.BFInventory.hasPending && root.BFInventory.hasPending())
+        return { ok: false, msg: 'Apply or discard the pending Items edits first.' };
+    }
+    const ev = evalEdit(ctx.ir, S.pending);
+    if (Object.keys(ev.bad).length)
+      return { ok: false, msg: 'Fix the origin coordinates marked in red (or discard them) first.' };
+    if (!Object.keys(ev.fields).length) { S.pending = null; return { ok: true }; }
+    const r = applyOrigin(ctx.ir, ev.fields);
+    if (!r.applied) { S.pending = null; return { ok: true }; }
+    const d = r.delta;
+    const msg = `Build origin moved to ${fmt(r.origin.x)}, ${fmt(r.origin.y)}, ${fmt(r.origin.z)} (offset ${fmt(d.x)}, ${fmt(d.y)}, ${fmt(d.z)}); ${r.applied.toLocaleString()} instance(s) translated.`;
+    const ir2 = Object.assign({}, r.ir, { reports: Object.assign({}, r.ir.reports, { warnings: r.ir.reports.warnings.concat([msg]) }) });
+    S.undo.push({ old: ctx.ir, now: ir2 });
+    S.pending = null;
+    S.msg = `Applied the origin move; ${r.applied.toLocaleString()} instance(s) translated. They are in the converted file.`;
+    S.msgIr = idOf(ir2);
+    if (opts.noSet) return { ok: true, ir: ir2 };
+    ctx.setIR(ir2);
+    return { ok: true };
+  }
+
+  function wire(ctx) {
+    const $ = (id) => document.getElementById(id);
+    const ir = ctx.ir;
+    if (!ir) return;
+    const updBar = () => {
+      const bar = $('or-pending');
+      if (!bar) return;
+      const { n, bad } = pendingCounts();
+      bar.style.display = S.pending ? '' : 'none';
+      const t = $('or-pending-n');
+      if (t) t.textContent = `${n} unsaved origin coordinate${n === 1 ? '' : 's'}${bad ? `, ${bad} with a problem (red)` : ''} - `;
+      const ap = $('or-apply');
+      if (ap) ap.disabled = !n || !!bad;
+    };
+    const paint = () => {
+      const p = S.pending || {}, pv = preview(ir, p);
+      document.querySelectorAll('.or-c').forEach((el) => {
+        const v = cellView(ir, el.dataset.f, pv, p);
+        el.className = 'or-c' + v.cls; el.title = v.title; el.innerHTML = v.html;
+      });
+      updBar();
+    };
+    const startEdit = (el) => {
+      if (el.querySelector('input')) return;
+      const a = el.dataset.f, t = S.pending || {};
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.className = 'or-ed'; inp.value = t[a] !== undefined ? String(t[a]) : origText(ir, a);
+      inp.spellcheck = false; inp.autocomplete = 'off';
+      el.title = ''; el.innerHTML = '<span style="visibility:hidden">' + el.innerHTML + '</span>'; el.appendChild(inp);
+      inp.focus(); inp.select();
+      let done = false;
+      const finish = (commit, step) => {
+        if (done) return;
+        done = true;
+        if (commit) commitEdit(ir, a, inp.value);
+        paint();
+        if (step) {
+          const cells = [...document.querySelectorAll('.or-c')];
+          const i = cells.indexOf(el) + step;
+          if (cells[i]) startEdit(cells[i]);
+        }
+      };
+      inp.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true, 0); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false, 0); }
+        else if (e.key === 'Tab') { e.preventDefault(); finish(true, e.shiftKey ? -1 : 1); }
+      };
+      inp.onblur = () => finish(true, 0);
+    };
+    document.querySelectorAll('.or-c').forEach((el) => { el.onclick = () => startEdit(el); });
+    const apb = $('or-apply');
+    if (apb) apb.onclick = () => { const r = applyPending(ctx); if (!r.ok) { S.msg = r.msg; S.msgIr = idOf(ctx.ir); ctx.rerender(); } };
+    const dcb = $('or-discard'); if (dcb) dcb.onclick = () => { S.pending = null; S.msg = ''; ctx.rerender(); };
+    const unb = $('or-undo');
+    if (unb) unb.onclick = () => {
+      const top = S.undo[S.undo.length - 1];
+      if (top && ctx.ir === top.now) { S.undo.pop(); S.msg = 'Origin move undone.'; S.msgIr = idOf(top.old); ctx.setIR(top.old); }
+    };
+    updBar();
+  }
+
+  const api = {
+    init, html, wire, applyPending, hasPending,
+    _test: { evalEdit, preview, applyOrigin, pendingCounts, state: S },
+  };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  if (root) root.BFOrigin = api;
 })(typeof window !== 'undefined' ? window : null);
 
 </script>
 
 <script>
 'use strict';
-/* global BFC, BFCat, BFChunks, BFItems, BFCreators, BFEnemies, BFBatch, BFInventory */
+/* global BFC, BFCat, BFChunks, BFItems, BFCreators, BFEnemies, BFBatch, BFInventory, BFOrigin */
 // ============================================================================
 // Valheim Build File Converter v3 — app layer (UI + wiring).
 //   codecs (window.BFC)  : v2 format codecs, unchanged
@@ -6072,16 +6405,14 @@ function renderInspector() {
     <h2><span class="badge">${esc(state.sourceFmt)}</span>${flavor}${esc(m.name ?? state.baseName)}</h2>
     <div class="tabs">${tabs.map(([k, l]) => `<button class="tab ${k === state.tab ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('')}</div>${body}`;
   el.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { state.tab = b.dataset.tab; renderInspector(); }));
-  if (state.tab === 'fields') wireFields(); else if (state.tab === 'unknown') wireUnknown(); else if (state.tab === 'creators') BFCreators.wire(creatorsCtx()); else if (state.tab === 'enemies') BFEnemies.wire(creatorsCtx()); else if (state.tab === 'items') BFInventory.wire(creatorsCtx()); else if (state.tab === 'batch') BFBatch.wire(creatorsCtx());
+  if (state.tab === 'overview') BFOrigin.wire(creatorsCtx()); else if (state.tab === 'fields') wireFields(); else if (state.tab === 'unknown') wireUnknown(); else if (state.tab === 'creators') BFCreators.wire(creatorsCtx()); else if (state.tab === 'enemies') BFEnemies.wire(creatorsCtx()); else if (state.tab === 'items') BFInventory.wire(creatorsCtx()); else if (state.tab === 'batch') BFBatch.wire(creatorsCtx());
 }
 function overviewHtml() {
   const ir = state.ir, S = state.stats, m = ir.meta, zs = ir.zdos;
   const containers = zs.filter((z) => z.strings.some((e) => e.hash === BFC.H.items)).length;
   const top = [...S.prefabs.entries()].sort((a, b) => b[1] - a[1]);
   const max = top.length ? top[0][1] : 1;
-  let origin = '';
-  if (m.ihCoordinates) origin = `<div class="kv">Saved at <b>${m.ihCoordinates.x.toFixed(1)}, ${m.ihCoordinates.y.toFixed(1)}, ${m.ihCoordinates.z.toFixed(1)}</b></div>`;
-  else if (m.origin && (m.origin.x || m.origin.y || m.origin.z)) origin = `<div class="kv">Origin <b>${m.origin.x.toFixed(1)}, ${m.origin.y.toFixed(1)}, ${m.origin.z.toFixed(1)}</b></div>`;
+  const origin = BFOrigin.html(creatorsCtx());
   const ov = S.ov, ovTot = ov.valid + ov.foreign + ov.mod + ov.inert;
   return `
     <div class="kv">${m.creator ? `by <b>${esc(m.creator)}</b> · ` : ''}${esc(m.description ?? '')}</div>${origin}
@@ -6239,6 +6570,9 @@ function convert() {
   if (!state.ir) return;
   { // v6: bake the edit tabs into one new IR before the export
     let cur = state.ir;
+    const ope = BFOrigin.applyPending(Object.assign(creatorsCtx(), { ir: cur }), { allowCross: true, noSet: true });
+    if (!ope.ok) { setStatus('err', esc(ope.msg)); return; }
+    if (ope.ir) cur = ope.ir;
     const cpe = BFCreators.applyPending(Object.assign(creatorsCtx(), { ir: cur }), { allowCross: true, noSet: true });
     if (!cpe.ok) { setStatus('err', esc(cpe.msg)); return; }
     if (cpe.ir) cur = cpe.ir;
@@ -6307,6 +6641,7 @@ function boot() {
   BFEnemies.init({ data: JSON.parse($('loot-data').textContent), getCat: () => cat, esc, download, getFiles: (c) => BFCreators.files(c) });
   BFBatch.init({ data: JSON.parse($('loot-data').textContent), getCat: () => cat, esc, download });
   BFInventory.init({ data: JSON.parse($('loot-data').textContent), getCat: () => cat, BFC, BFItems, esc, download });
+  BFOrigin.init({ esc });
   const drop = $('drop'), input = $('file-input'), folder = $('folder-input');
   drop.addEventListener('click', (e) => { if (e.target.id !== 'pick-folder') input.click(); });
   $('pick-folder').addEventListener('click', (e) => { e.stopPropagation(); folder.click(); });
