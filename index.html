@@ -3018,7 +3018,10 @@ BFC.b64encode = b64encode;
  *
  * The Enemy groups table is editable: level, HP and skill factor can be typed and are written to every
  * enemy of that group in the loaded file.  Added files stay read-only, and the derived columns (count,
- * vs vanilla, hit, flags) are computed, never stored.
+ * hit and the HP / hit heat colours) are computed, never stored.
+ *
+ * A top bar can scale every enemy in the loaded file at once: HP by a percentage (written to the
+ * health key) and damage by a percentage (written to RandomSkillFactor, which multiplies every hit).
  *
  * Rules taken from the game code (Character.cs / Attack.cs):
  *   HP        = ZDO 'health' if set, else 'max_health', else prefab m_health x level (world level 0)
@@ -3116,7 +3119,7 @@ BFC.b64encode = b64encode;
       if (!g) { g = { gid: key, stem: e.stem, name: e.name, counted: e.counted, level: e.level, hp: e.hp, rsf: e.rsf, adjMax: e.adjMax, maxHit: e.maxHit, hasAttacks: e.hasAttacks, hpRatio: e.hpRatio, baseHp: e.baseHp, flags: new Set(), members: [] }; groups.set(key, g); }
       g.members.push(e); e.flags.forEach((fl) => g.flags.add(fl));
     }
-    const groupList = [...groups.values()].sort((a, b) => (Number(b.counted) - Number(a.counted)) || ((b.members.length * (b.hp || 0)) - (a.members.length * (a.hp || 0))));
+    const groupList = [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.stem.localeCompare(b.stem, undefined, { sensitivity: 'base' }));
     for (const g of groupList) { g.allCurrent = g.members.every((m) => m.current); g.currentCount = g.members.filter((m) => m.current).length; }
 
     // clusters: single-linkage on XZ, then occupied area from overlapping "room" discs
@@ -3233,20 +3236,22 @@ BFC.b64encode = b64encode;
     const cls = (locked ? ' locked' : bad ? ' bad' : t[f] !== undefined ? ' mod' : '');
     let html, title;
     if (f === 'level') { html = esc(bad ? String(t.level) : String(pv.level)); title = bad || (locked ? 'Only a group that is entirely in the loaded file can be edited' : 'Click to edit the level of every enemy in this group'); }
-    else if (f === 'hp') { html = bad ? esc(String(t.hp)) : Number.isFinite(pv.hp) ? esc(num(pv.hp)) : '?'; title = bad || (locked ? 'Only a group that is entirely in the loaded file can be edited' : 'Click to edit the stored health of every enemy in this group'); }
+    else if (f === 'hp') { html = bad ? esc(String(t.hp)) : Number.isFinite(pv.hp) ? esc(num(pv.hp)) : '?'; title = bad || (locked ? 'Only a group that is entirely in the loaded file can be edited' : 'Click to edit the stored health of every enemy in this group; colour = relative HP across the groups'); }
     else if (f === 'skill') { html = bad ? esc(String(t.skill)) : pv.rsf !== 1 ? esc(pv.rsf.toFixed(2)) : ''; title = bad || (locked ? 'Only a group that is entirely in the loaded file can be edited' : 'Click to edit RandomSkillFactor for every enemy in this group'); }
     else if (f === 'ratio') { html = Number.isFinite(pv.ratio) ? 'x' + pv.ratio.toFixed(2) : ''; title = 'HP divided by the vanilla HP (prefab x level); computed'; }
-    else { html = g.hasAttacks ? dmgText(pv.adjMax) : '-'; title = 'Highest attack per hit with the level and skill factor applied; computed'; }
+    else { html = g.hasAttacks ? dmgText(pv.adjMax) : '-'; title = 'Highest attack per hit with the level and skill factor applied; computed; colour = relative hit across the groups'; }
     return { cls, html, title };
   }
   const cellHtml = (g, f, pv, t) => {
     const v = cellView(g, f, pv, t);
-    return `<td class="n en-c${v.cls}" data-f="${f}" title="${S.deps.esc(v.title)}">${v.html}</td>`;
+    const bg = heatOf(g, f);
+    return `<td class="n en-c${v.cls}" data-f="${f}"${bg ? ` style="background:${bg}"` : ''} title="${S.deps.esc(v.title)}">${v.html}</td>`;
   };
   function paintCell(td, g, f) {
     const p = E.pending.get(g.gid), t = p ? p.t : {};
     const v = cellView(g, f, previewOf(g, t), t);
     td.className = 'n en-c' + v.cls; td.title = v.title; td.innerHTML = v.html;
+    td.style.background = heatOf(g, f) || '';
   }
   function commitEdit(g, f, value) {
     const key = g.gid;
@@ -3299,16 +3304,21 @@ BFC.b64encode = b64encode;
     }
     return { ir: applied ? Object.assign({}, ir, { zdos }) : ir, applied, failed };
   }
+  function crossPending() {
+    if (root && root.BFCreators && root.BFCreators.hasPending && root.BFCreators.hasPending())
+      return 'Apply or discard the pending Creator Loot edits first.';
+    if (root && root.BFOrigin && root.BFOrigin.hasPending && root.BFOrigin.hasPending())
+      return 'Apply or discard the pending build origin move first.';
+    if (root && root.BFInventory && root.BFInventory.hasPending && root.BFInventory.hasPending())
+      return 'Apply or discard the pending Items edits first.';
+    return '';
+  }
   function applyPending(ctx, opts) {
     opts = opts || {};
     if (!E.pending.size || !ctx.ir || !ctx.setIR) return { ok: true };
     if (!opts.allowCross) {
-      if (root && root.BFCreators && root.BFCreators.hasPending && root.BFCreators.hasPending())
-        return { ok: false, msg: 'Apply or discard the pending Creator Loot edits first.' };
-      if (root && root.BFOrigin && root.BFOrigin.hasPending && root.BFOrigin.hasPending())
-        return { ok: false, msg: 'Apply or discard the pending build origin move first.' };
-      if (root && root.BFInventory && root.BFInventory.hasPending && root.BFInventory.hasPending())
-        return { ok: false, msg: 'Apply or discard the pending Items edits first.' };
+      const busy = crossPending();
+      if (busy) return { ok: false, msg: busy };
     }
     const edits = [], problems = [];
     for (const [key, p] of E.pending) {
@@ -3336,8 +3346,70 @@ BFC.b64encode = b64encode;
     return { ok: true };
   }
 
+  // scale every enemy in the loaded file at once: HP through the health key, damage through RandomSkillFactor
+  function scaleAll(ctx, hpPct, dmgPct) {
+    if (!ctx.ir || !ctx.setIR) return { ok: false, msg: 'Load a file first.' };
+    if (hasPending()) return { ok: false, msg: 'Apply or discard the pending Enemy edits first.' };
+    const busy = crossPending();
+    if (busy) return { ok: false, msg: busy };
+    const hp = Number(hpPct === '' || hpPct == null ? 0 : hpPct), dmg = Number(dmgPct === '' || dmgPct == null ? 0 : dmgPct);
+    if (!Number.isFinite(hp) || !Number.isFinite(dmg) || hp <= -100 || dmg <= -100 || hp > 10000 || dmg > 10000)
+      return { ok: false, msg: 'HP % and damage % must be numbers above -100 and at most 10,000.' };
+    if (!hp && !dmg) return { ok: false, msg: 'Enter an HP % or a damage % to scale.' };
+    const res = compute(ctx);
+    if (!res) return { ok: false, msg: 'No enemies are loaded.' };
+    const hpF = 1 + hp / 100, dmgF = 1 + dmg / 100;
+    const edits = [];
+    for (const e of res.enemies) {
+      if (!e.current) continue;
+      const fields = {};
+      if (hp && Number.isFinite(e.hp)) {
+        const target = Math.max(HP_MIN, Math.min(HP_MAX, Math.round(e.hp * hpF)));
+        if (target !== Math.round(e.hp)) fields.hp = target;
+      }
+      if (dmg && e.hasAttacks) {
+        const target = Math.max(0.01, Math.min(100, Math.round(e.rsf * dmgF * 100) / 100));
+        if (Math.round(target * 100) !== Math.round(e.rsf * 100)) fields.rsf = target;
+      }
+      if (Object.keys(fields).length) edits.push({ zi: e.zi, expect: { stem: e.stem, level: e.level, rsf: e.rsf }, fields, label: `${e.name} (${Math.round(e.x)}, ${Math.round(e.z)})` });
+    }
+    const parts = [];
+    if (hp) parts.push(`HP ${hp > 0 ? '+' : ''}${hp}%`);
+    if (dmg) parts.push(`damage ${dmg > 0 ? '+' : ''}${dmg}%`);
+    if (!edits.length) { S.msg = `No enemy changed: ${parts.join(' · ')} is already at the limit.`; S.msgIr = idOf(ctx.ir); return { ok: false, msg: S.msg }; }
+    const r = applyEnemyEdits(ctx.ir, edits);
+    if (!r.applied) { S.msg = 'No enemy could be scaled: ' + r.failed.join('; '); S.msgIr = idOf(ctx.ir); return { ok: false, msg: S.msg }; }
+    const line = `Scaled ${r.applied} enemy instance(s): ${parts.join(' · ')}`;
+    const ir2 = Object.assign({}, r.ir, { reports: Object.assign({}, r.ir.reports, { warnings: r.ir.reports.warnings.concat([line]) }) });
+    E.undo.push({ old: ctx.ir, now: ir2 });
+    S.cache = null;
+    S.msg = `${line}. They are in the converted file.` + (r.failed.length ? ` Not applied: ${r.failed.slice(0, 3).join('; ')}` : '');
+    S.msgIr = idOf(ir2);
+    ctx.setIR(ir2);
+    return { ok: true };
+  }
+
   const dmgText = (v) => (v > 0 ? num(v, v < 10 ? 1 : 0) : '-');
   const fmtTime = (s) => (s >= 60 ? `${(s / 60).toFixed(1)} min` : `${s.toFixed(0)} s`);
+
+  // ---- heat colours: HP and hit each get their own scale across the visible groups ----
+  function heatScale(groups, valOf) {
+    const pts = groups.map((g) => ({ g, v: valOf(g) })).filter((p) => Number.isFinite(p.v) && p.v > 0);
+    const map = new Map();
+    if (!pts.length) return map;
+    const tf = (v) => Math.log(Math.max(v, 1));
+    const lo = Math.min(...pts.map((p) => tf(p.v))), hi = Math.max(...pts.map((p) => tf(p.v)));
+    for (const p of pts) {
+      const t = hi > lo ? (tf(p.v) - lo) / (hi - lo) : 0.5;
+      map.set(p.g.gid, `hsla(${Math.round(120 - 120 * t)},75%,45%,${(0.14 + 0.34 * t).toFixed(2)})`);
+    }
+    return map;
+  }
+  function heatOf(g, f) {
+    if (!S.heat || !g) return '';
+    const map = f === 'hp' ? S.heat.hp : f === 'hit' ? S.heat.hit : null;
+    return (map && map.get(g.gid)) || '';
+  }
 
   function html(ctx) {
     const esc = S.deps.esc;
@@ -3355,13 +3427,15 @@ BFC.b64encode = b64encode;
     if (!res) return controls + '<p class="dim">Load a file or tick one on the Creator Loot tab.</p>';
     E.recs = new Map();
     for (const g of res.groups) E.recs.set(g.gid, g);
+    S.heat = { hp: heatScale(res.groups, (g) => g.hp), hit: heatScale(res.groups, (g) => (g.hasAttacks ? g.adjMax : NaN)) };
     const t = res.totals;
     const flagCell = (fl) => (fl.length ? `<span class="warn">${esc(fl.join(' · '))}</span>` : '');
     const groupRows = res.groups.map((g) => {
       const coords = g.members.slice(0, 40).map((e) => `${Math.round(e.x)}, ${Math.round(e.z)}`).join('\n') + (g.members.length > 40 ? `\n... +${g.members.length - 40} more` : '');
       const p = E.pending.get(g.gid), tg = p ? p.t : {}, pv = previewOf(g, tg);
-      return `<tr data-key="${esc(g.gid)}"><td><details><summary>${esc(g.name)}</summary><div class="list">${esc(coords)}</div></details></td><td class="n">${g.members.length}</td>${cellHtml(g, 'level', pv, tg)}
-        ${cellHtml(g, 'hp', pv, tg)}${cellHtml(g, 'ratio', pv, tg)}${cellHtml(g, 'skill', pv, tg)}${cellHtml(g, 'hit', pv, tg)}<td>${flagCell([...g.flags])}</td></tr>`;
+      const label = g.stem && g.stem !== g.name ? `${esc(g.name)} <span class="dim">· ${esc(g.stem)}</span>` : esc(g.name);
+      return `<tr data-key="${esc(g.gid)}"><td><details><summary>${label}</summary><div class="list">${esc(coords)}</div></details></td><td class="n">${g.members.length}</td>${cellHtml(g, 'level', pv, tg)}
+        ${cellHtml(g, 'hp', pv, tg)}${cellHtml(g, 'skill', pv, tg)}${cellHtml(g, 'hit', pv, tg)}</tr>`;
     }).join('');
     const clusterRows = res.clusters.slice(0, 60).map((c) => `<tr><td class="n">${c.id}</td><td>${esc(c.comp)}</td><td class="n">${c.n}</td><td class="n">${num(c.sumHp)}</td><td class="n">${num(c.pool)}</td>
         <td class="n">${num(c.area)}</td><td class="n">${num(c.density, 1)}</td><td class="n">${dmgText(c.hitDensity)}</td>${S.partyDps > 0 ? `<td class="n">${fmtTime(c.time)}</td>` : ''}
@@ -3379,31 +3453,39 @@ BFC.b64encode = b64encode;
     <div id="en-pending" class="status info" style="display:none"><span id="en-pending-n"></span><button class="btn btn-sm" id="en-apply">Apply to loaded file</button> <button class="btn btn-sm" id="en-discard">Discard</button></div>
     ${msg ? `<div class="status info">${esc(msg)}</div>` : ''}`;
     return controls + bar + `
+      <div class="tools"><b>Scale all enemies</b> HP <input type="text" id="en-scale-hp" size="3" value="0"> % · damage <input type="text" id="en-scale-dmg" size="3" value="0"> % <button class="btn btn-sm" id="en-scale">Apply scale</button> <span class="dim">positive increases; HP is rounded, damage scales RandomSkillFactor</span></div>
       <div class="stats">
         <div class="stat"><div class="n">${num(t.enemies)}</div><div class="l">enemies${t.unkillable ? ` (${t.unkillable} unkillable)` : ''}</div></div>
         <div class="stat"><div class="n">${num(t.sumHp)}</div><div class="l">total HP</div></div>
         <div class="stat"><div class="n">${num(t.pool)}</div><div class="l">effective pool (clusters)</div></div>
         <div class="stat"><div class="n">${num(t.maxHp)}</div><div class="l">biggest HP</div></div>
         <div class="stat"><div class="n">${dmgText(t.maxHit)}</div><div class="l">hardest hit</div></div>
-        <div class="stat"><div class="n" style="color:var(--warn)">${num(t.flagged)}</div><div class="l">flagged</div></div>
       </div>
       ${noAtk}
       <div class="tools"><button class="btn btn-primary" id="en-csv">Download enemies CSV</button><button class="btn btn-primary" id="en-csv2">Download clusters CSV</button>
         <button class="btn btn-sm" id="en-undo" ${topUndo && ctx.ir === topUndo.now ? '' : 'disabled'}>Undo last apply</button>
         <span class="dim">median HP ${num(t.hpMed)} · median hit ${dmgText(t.hitMed)} · ${num(t.clusters)} clusters</span></div>
-      <h3>Enemy groups <span class="dim">(prefab, level, HP, skill factor; hit = highest attack per hit with level and skill factor applied)</span></h3>
-      <div class="kv"><b>Enemy groups are editable</b>: click level, HP or skill factor to change it for every enemy in that group in the loaded file; count, vs vanilla, hit and flags are computed. Groups that include added files are read-only.</div>
-      <div class="scroll" style="max-height:340px;overflow-y:auto"><table class="hist"><thead><tr><td>enemy</td><td class="n">count</td><td class="n">level</td><td class="n">HP</td><td class="n">vs vanilla</td><td class="n">skill</td><td class="n">hit</td><td>flags</td></tr></thead><tbody>${groupRows}</tbody></table></div>
+      <h3>Enemy groups <span class="dim">(sorted by name; prefab shown beside it; hit = highest attack per hit with level and skill factor applied)</span></h3>
+      <div class="kv"><b>Enemy groups are editable</b>: click level, HP or skill factor to change it for every enemy in that group in the loaded file; count and hit are computed, and the HP / hit colours show their relative size. Groups that include added files are read-only.</div>
+      <div class="scroll" style="max-height:340px;overflow-y:auto"><table class="hist"><thead><tr><td>enemy</td><td class="n">count</td><td class="n">level</td><td class="n">HP</td><td class="n">skill</td><td class="n">hit</td></tr></thead><tbody>${groupRows}</tbody></table></div>
       <h3>Clusters <span class="dim">(enemies within ${res.params.link} m of each other; density = effective pool per 100 m² of occupied room)</span></h3>
       <div class="scroll" style="max-height:340px;overflow-y:auto"><table class="hist"><thead><tr><td class="n">#</td><td>enemies</td><td class="n">n</td><td class="n">sum HP</td><td class="n">pool</td><td class="n">m²</td><td class="n">HP/100m²</td><td class="n">dmg/100m²</td>${S.partyDps > 0 ? '<td class="n">time</td>' : ''}<td>at</td><td>flags</td></tr></thead><tbody>${clusterRows}</tbody></table></div>
       <h3>Map <span class="dim">(top-down; discs are each enemy's room, colour = cluster density, overlap = crowding, dot size = HP on a log scale, hover for details)</span></h3>
+      <div id="en-map-note" class="note warn" style="display:none">The map could not be drawn in this browser (canvas may be blocked by an extension or a privacy setting). The tables above still work.</div>
       <div style="position:relative;display:inline-block;max-width:100%"><canvas id="en-map" width="660" height="440" style="max-width:100%;background:#12141c;border-radius:8px;display:block"></canvas>
       <div id="en-tip" style="position:absolute;display:none;pointer-events:none;background:rgba(0,0,0,.85);color:#fff;padding:4px 8px;border-radius:6px;font-size:12px;white-space:nowrap;z-index:5"></div></div>`;
   }
 
+  function showMapNote(msg) {
+    const n = document.getElementById('en-map-note');
+    if (n) { n.style.display = ''; if (msg) n.textContent = msg; }
+  }
+
   function drawMap(res) {
     const cv = document.getElementById('en-map'); if (!cv || !res) return;
-    const g = cv.getContext('2d'); g.clearRect(0, 0, cv.width, cv.height);
+    const g = cv.getContext && cv.getContext('2d');
+    if (!g) { showMapNote(); return; }
+    g.clearRect(0, 0, cv.width, cv.height);
     const pts = res.enemies.filter((e) => e.counted); if (!pts.length) return;
     const r = res.params.r; let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (const e of pts) { x0 = Math.min(x0, e.x - r); x1 = Math.max(x1, e.x + r); z0 = Math.min(z0, e.z - r); z1 = Math.max(z1, e.z + r); }
@@ -3434,7 +3516,7 @@ BFC.b64encode = b64encode;
       for (const p of S.mapPts || []) { const d = Math.hypot(p.x - mx, p.y - my); if (d <= p.r + 4 && d < bd) { best = p; bd = d; } }
       if (!best) { tip.style.display = 'none'; return; }
       const e = best.e;
-      tip.textContent = `${e.name} \u00b7 L${e.level} \u00b7 ${num(e.hp)} HP${e.hasAttacks ? ' \u00b7 hit ' + dmgText(e.adjMax) : ''}${e.flags.length ? ' \u00b7 ' + e.flags.join(', ') : ''}`;
+      tip.textContent = `${e.name}${e.stem && e.stem !== e.name ? ` (${e.stem})` : ''} \u00b7 L${e.level} \u00b7 ${num(e.hp)} HP${e.hasAttacks ? ' \u00b7 hit ' + dmgText(e.adjMax) : ''}${e.flags.length ? ' \u00b7 ' + e.flags.join(', ') : ''}`;
       const x = ev.clientX - rect.left, flip = x > rect.width / 2;
       tip.style.left = (flip ? x - 12 : x + 12) + 'px'; tip.style.top = (ev.clientY - rect.top + 14) + 'px';
       tip.style.transform = flip ? 'translateX(-100%)' : 'none'; tip.style.display = 'block';
@@ -3449,8 +3531,15 @@ BFC.b64encode = b64encode;
     const $ = (id) => document.getElementById(id);
     const bind = (id, key, min) => { const el = $(id); if (el) el.onchange = () => { const v = parseFloat(el.value); S[key] = Number.isFinite(v) && v >= min ? v : S[key]; ctx.rerender(); }; };
     bind('en-link', 'linkDist', 1); bind('en-room', 'roomRadius', 1); bind('en-aoe', 'aoe', 0); bind('en-dps', 'partyDps', 0);
+    const scaleBtn = $('en-scale');
+    if (scaleBtn) scaleBtn.onclick = () => {
+      const hpEl = $('en-scale-hp'), dmgEl = $('en-scale-dmg');
+      const r = scaleAll(ctx, hpEl ? hpEl.value : 0, dmgEl ? dmgEl.value : 0);
+      if (!r.ok) { S.msg = r.msg; S.msgIr = idOf(ctx.ir); ctx.rerender(); }
+    };
     const res = S.cache; if (!res) return;
-    drawMap(res); bindHover();
+    try { drawMap(res); bindHover(); }
+    catch (e) { showMapNote('The map could not be drawn in this browser (' + (e && e.message ? e.message : 'canvas error') + '). The tables above still work.'); }
 
     // ---- editable Enemy groups
     const updBar = () => {
@@ -3507,8 +3596,8 @@ BFC.b64encode = b64encode;
       res.clusters.map((c) => [c.id, c.cx.toFixed(1), c.cz.toFixed(1), c.n, c.comp, Math.round(c.sumHp), Math.round(c.maxHp), Math.round(c.pool), Math.round(c.area), c.overlap.toFixed(2), c.density.toFixed(1), c.hitDensity.toFixed(1), c.time ? c.time.toFixed(0) : '', c.flags.join('; ')])), 'text/csv');
   }
 
-  const api = { init, html, wire, analyze, applyPending, hasPending, state: S, constants: { SKILL_MEAN, TH },
-    _test: { evalEdit, previewOf, applyEnemyEdits, pendingCounts, edits: E } };
+  const api = { init, html, wire, analyze, applyPending, scaleAll, hasPending, state: S, constants: { SKILL_MEAN, TH },
+    _test: { evalEdit, previewOf, applyEnemyEdits, scaleAll, heatScale, pendingCounts, edits: E } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.BFEnemies = api;
 })(typeof window !== 'undefined' ? window : null);
@@ -4116,16 +4205,15 @@ BFC.b64encode = b64encode;
   ].join(', ');
 
   const PRESETS = [
-    { id: 'nosupport', label: 'Pieces: support wear, burnable, ash immunity = False',
-      rule: { name: 'Pieces: WearNTear m_noSupportWear, m_burnable, m_ashDamageImmune = false', enabled: true, prefab: '', component: 'WearNTear', where: '',
+    { id: 'nosupport', label: 'Pieces: support wear and burnable = False',
+      rule: { name: 'Pieces: WearNTear m_noSupportWear and m_burnable = false', enabled: true, prefab: '', component: 'WearNTear', where: '',
         actions: [{ op: 'set', key: 'WearNTear.m_noSupportWear', type: 'bool', value: 'false' },
-          { op: 'set', key: 'WearNTear.m_burnable', type: 'bool', value: 'false' },
-          { op: 'set', key: 'WearNTear.m_ashDamageImmune', type: 'bool', value: 'false' }] } },
+          { op: 'set', key: 'WearNTear.m_burnable', type: 'bool', value: 'false' }] } },
     { id: 'indestructible', label: 'Indestructible: health -1',
       rule: { name: 'Indestructible pieces: health and WearNTear.m_health -> -1', enabled: true, prefab: '', component: 'WearNTear', where: "key('health') > 1000000",
         actions: [{ op: 'set', key: 'health', type: 'float', value: '-1' }, { op: 'set', key: 'WearNTear.m_health', type: 'float', value: '-1' }] } },
     { id: 'nocreator', label: 'Breakable pieces: remove creator key',
-      rule: { name: 'Breakable pieces: remove the creator key', enabled: true, prefab: '', component: 'WearNTear', where: "key('health') < 1000000",
+      rule: { name: 'Breakable pieces: remove the creator key', enabled: true, prefab: '', component: 'WearNTear', where: "key('health') < 1000000 && key('health') > 0",
         actions: [{ op: 'remove', key: 'creator', type: '', value: '' }] } },
     { id: 'levels', label: 'Enemies: level 1, same HP & damage, ★ name',
       rule: { name: 'Enemies: level -> 1, keep health and damage, tag the name with the old level', enabled: true, prefab: '', component: 'Character', where: 'level > 1 and baseHp() != null',
@@ -4137,9 +4225,6 @@ BFC.b64encode = b64encode;
           // the star count comes from the new damage factor (2 x (factor - 1), what the enemy will hit like), and a name that already has the tag is left alone
           { op: 'set', key: '@Character.m_name', type: 'string', value: "tagName(mName(), coalesce(key('RandomSkillFactor'), 1) * levelDmg(level))" },
           { op: 'set', key: 'level', type: 'int', value: '1' }] } },
-    { id: 'startag', label: 'Enemies: ★ name tag from damage',
-      rule: { name: 'Enemies: add a ★ name tag from RandomSkillFactor (2 x (factor - 1) stars)', enabled: true, prefab: '', component: 'Character', where: "key('RandomSkillFactor') > 1",
-        actions: [{ op: 'set', key: '@Character.m_name', type: 'string', value: "tagName(mName(), key('RandomSkillFactor'))" }] } },
     { id: 'magicacloth', label: 'Armor stands: remove Magica Cloth items',
       rule: { name: 'Armor stands: remove the listed Magica Cloth items', enabled: true, prefab: 'ArmorStand_Male, ArmorStand_Female', component: 'ArmorStand', where: '',
         actions: [{ op: 'removeItem', key: '*_item', type: '', value: MAGICA_CLOTH_ITEMS }] } },
